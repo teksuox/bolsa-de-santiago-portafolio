@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { MarketStock, StockAlert } from '../types';
 import { formatCLP, formatPercent } from '../utils';
 import { Search, Flame, TrendingUp, TrendingDown, DollarSign, PlusCircle, Check, Sparkles, Filter, Trash2, RotateCw, X, Star, Bell, RotateCcw } from 'lucide-react';
+import StockHistoryVisualizer from './StockHistoryVisualizer';
 
 interface MarketWatchProps {
   marketStocks: MarketStock[];
@@ -43,6 +44,7 @@ export default function MarketWatch({
   const [selectedSector, setSelectedSector] = useState('ALL');
   const [portfolioFilter, setPortfolioFilter] = useState<'ALL' | 'OWNED' | 'NOT_OWNED'>('ALL');
   const [justBoughtTicker, setJustBoughtTicker] = useState<string | null>(null);
+  const [expandedTicker, setExpandedTicker] = useState<string | null>(null);
 
   // States for the custom stock real-time search box
   const [customTicker, setCustomTicker] = useState('');
@@ -336,33 +338,44 @@ export default function MarketWatch({
               const isTickingBuy = justBoughtTicker === stock.ticker;
               const alert = alerts.find(a => a.ticker === stock.ticker);
               const isStarred = !!alert;
+              const isExpanded = expandedTicker === stock.ticker;
 
               return (
-                <tr key={stock.ticker} className={`hover:bg-slate-50/50 transition ${isStarred ? 'bg-amber-50/10' : ''}`}>
-                  {/* Star Favorite Indicator Column */}
-                  <td className="py-4 px-2 text-center">
-                    <button
-                      onClick={() => onToggleAlert && onToggleAlert(stock.ticker, stock.price)}
-                      title={isStarred ? "Quitar de favoritas / Desactivar alerta sonoro" : "Marcar como favorita y activar alerta sonora"}
-                      className={`p-1.5 rounded-full transition-all hover:scale-110 active:scale-95 cursor-pointer ${
-                        isStarred 
-                          ? 'text-amber-500 fill-amber-400 drop-shadow-xs' 
-                          : 'text-slate-300 hover:text-amber-400'
-                      }`}
-                    >
-                      <Star className="w-4 h-4" />
-                    </button>
-                  </td>
+                <React.Fragment key={stock.ticker}>
+                  <tr className={`hover:bg-slate-50/50 transition ${isStarred ? 'bg-amber-50/10' : ''} ${isExpanded ? 'bg-slate-50' : ''}`}>
+                    {/* Star Favorite Indicator Column */}
+                    <td className="py-4 px-2 text-center">
+                      <button
+                        onClick={() => onToggleAlert && onToggleAlert(stock.ticker, stock.price)}
+                        title={isStarred ? "Quitar de favoritas / Desactivar alerta sonoro" : "Marcar como favorita y activar alerta sonora"}
+                        className={`p-1.5 rounded-full transition-all hover:scale-110 active:scale-95 cursor-pointer ${
+                          isStarred 
+                            ? 'text-amber-500 fill-amber-400 drop-shadow-xs' 
+                            : 'text-slate-300 hover:text-amber-400'
+                        }`}
+                      >
+                        <Star className="w-4 h-4" />
+                      </button>
+                    </td>
 
-                  {/* Ticker */}
-                  <td className="py-4 px-4 font-mono">
-                    <span className="font-bold text-slate-900 text-sm whitespace-nowrap">{stock.ticker}</span>
-                    {isAlreadyOwned && (
-                      <span className="ml-2 bg-teal-50 text-teal-800 text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap">
-                        En Portafolio
-                      </span>
-                    )}
-                  </td>
+                    {/* Ticker (Clickable Toggle to expand detail) */}
+                    <td className="py-4 px-4 font-mono">
+                      <button
+                        onClick={() => setExpandedTicker(isExpanded ? null : stock.ticker)}
+                        className="font-bold text-slate-900 text-sm hover:text-teal-600 hover:underline transition-colors focus:outline-none text-left cursor-pointer flex items-center gap-1 group"
+                        title="Haz clic para ver la fluctuación histórica y configurar rangos"
+                      >
+                        <span className="group-hover:text-teal-600">{stock.ticker}</span>
+                        <span className="text-[10px] text-slate-400 font-sans font-normal opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-1">
+                          ({isExpanded ? 'Ocultar info 📊' : 'Ver info 📊'})
+                        </span>
+                      </button>
+                      {isAlreadyOwned && (
+                        <span className="ml-2 bg-teal-50 text-teal-800 text-[9px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap inline-block mt-0.5">
+                          En Portafolio
+                        </span>
+                      )}
+                    </td>
 
                   {/* Name */}
                   <td className="py-4 px-4 text-slate-600 font-medium">
@@ -492,6 +505,19 @@ export default function MarketWatch({
                     </div>
                   </td>
                 </tr>
+
+                {/* Expanded stock history fluctuation detail row */}
+                {isExpanded && (
+                  <tr key={`${stock.ticker}-detail`}>
+                    <td colSpan={10} className="px-5 py-4 bg-slate-100/50 border-y border-slate-200">
+                      <StockHistoryVisualizer
+                        stock={stock}
+                        onClose={() => setExpandedTicker(null)}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
               );
             })}
           </tbody>

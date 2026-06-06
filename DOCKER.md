@@ -27,7 +27,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3002
 
 # Instalar únicamente dependencias de producción (esbuild mantiene configurado 'external' en el package.json)
 COPY package*.json ./
@@ -37,7 +37,7 @@ RUN npm install --only=production --ignore-scripts
 COPY --from=builder /app/dist ./dist
 
 # Exponer el puerto
-EXPOSE 3000
+EXPOSE 3002
 
 # Executable de inicio
 CMD ["node", "dist/server.cjs"]
@@ -74,9 +74,9 @@ services:
     image: simulador-bolsa-santiago:latest
     container_name: bolsa-santiago-simulador
     ports:
-      - "3000:3000"
+      - "${PORT:-3002}:${PORT:-3002}"
     environment:
-      - PORT=3000
+      - PORT=${PORT:-3002}
       - NODE_ENV=production
       # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta e ingresa tu clave si se requiere Gemini API
     restart: unless-stopped
@@ -99,7 +99,7 @@ Para levantar el simulador de portafolio con Docker de manera instantánea, sigu
    ```
 
 3. **Acceder a la aplicación:**
-   Abre tu navegador de preferencia e ingresa a: **`http://localhost:3000`**
+   Abre tu navegador de preferencia e ingresa a: **`http://localhost:3002`**
 
 4. **Para detener el contenedor:**
    ```bash

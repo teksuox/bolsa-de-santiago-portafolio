@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, DollarSign, Wallet, Calendar, FileCheck, Landmark, Briefcase } from 'lucide-react';
+import { TrendingUp, DollarSign, Wallet, Calendar, FileCheck, Landmark, Briefcase, Cloud } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: string;
@@ -62,6 +62,7 @@ export default function Header({
     { id: 'dividends', label: 'Calendario Dividendos', icon: Calendar },
     { id: 'taxes', label: 'Operación Renta', icon: FileCheck },
     { id: 'market', label: 'Bolsa de Santiago (IPSA)', icon: Landmark },
+    { id: 'backup', label: 'Respaldo Cloud', icon: Cloud },
   ];
 
   return (

@@ -6,9 +6,9 @@ services:
     image: simulador-bolsa-santiago:latest
     container_name: bolsa-santiago-simulador
     ports:
-      - "3002:3002"
+      - "${PORT:-3002}:${PORT:-3002}"
     environment:
-      - PORT=3002
+      - PORT=${PORT:-3002}
       - NODE_ENV=production
       # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta y ingresa tu clave si se requiere Gemini API
     restart: unless-stopped

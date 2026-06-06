@@ -3,9 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // Current local time
 const CURRENT_DATE_STRING = '2026-06-04';
@@ -29,7 +33,7 @@ const INITIAL_MARKET_STOCKS_BACKUP = [
 
 async function startServer() {
   const app = express();
-  const PORT = 3002;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3002;
 
   app.use(express.json());
 

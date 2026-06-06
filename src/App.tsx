@@ -12,6 +12,7 @@ import MarketWatch from './components/MarketWatch';
 import DividendTracker from './components/DividendTracker';
 import TaxRefunds from './components/TaxRefunds';
 import ChartsAndAnalytics from './components/ChartsAndAnalytics';
+import DriveBackup from './components/DriveBackup';
 
 import { StockHolding, DividendPayment, TaxRefund, MarketStock, StockAlert } from './types';
 import {
@@ -712,6 +713,28 @@ export default function App() {
                   onToggleAlert={handleToggleAlert}
                   onUpdateTargetPrice={handleUpdateTargetPrice}
                   onResetAlert={handleResetAlert}
+                />
+              )}
+
+              {activeTab === 'backup' && (
+                <DriveBackup
+                  onDataRestored={async () => {
+                    try {
+                      const storedHoldings = await portafolioDB.getHoldings();
+                      const storedDividends = await portafolioDB.getDividends();
+                      const storedRefunds = await portafolioDB.getRefunds();
+                      const storedYield = await portafolioDB.getAnnualYield();
+                      
+                      setHoldings(storedHoldings);
+                      setDividends(storedDividends);
+                      setRefunds(storedRefunds);
+                      setAnnualPerformancePercent(storedYield);
+                      
+                      setActiveTab('dashboard');
+                    } catch (err) {
+                      console.error('Error al recargar datos importados:', err);
+                    }
+                  }}
                 />
               )}
             </motion.div>
