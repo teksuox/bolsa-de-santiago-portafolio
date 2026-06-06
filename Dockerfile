@@ -14,7 +14,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3002
 
 # Instalar únicamente dependencias de producción (esbuild mantiene configurado 'external' en el package.json)
 COPY package*.json ./
@@ -24,7 +24,7 @@ RUN npm install --only=production --ignore-scripts
 COPY --from=builder /app/dist ./dist
 
 # Exponer el puerto
-EXPOSE 3000
+EXPOSE 3002
 
 # Executable de inicio
 CMD ["node", "dist/server.cjs"]
