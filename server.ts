@@ -29,7 +29,7 @@ const INITIAL_MARKET_STOCKS_BACKUP = [
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = 3002;
 
   app.use(express.json());
 
