@@ -1,20 +1,95 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Analizador y Portafolio de Inversión - Bolsa de Santiago
 
-# Run and deploy your AI Studio app
+Este proyecto es un sistema interactivo y moderno para gestionar portafolios de inversión, realizar un seguimiento de dividendos y simular devoluciones de impuestos (F-22) para acciones listadas en la **Bolsa de Santiago (Chile)**.
 
-This contains everything you need to run your app locally.
+*Este archivo y el proyecto completo han sido construidos por un **Asistente de Inteligencia Artificial (AI Coding Agent)** basado en las ideas, comentarios y dirección de un **Humano**.*
 
-View your app in AI Studio: https://ai.studio/apps/11211f4b-3506-480e-9e96-bbe218390754
+---
 
-## Run Locally
+## 🚀 Características Principales
 
-**Prerequisites:**  Node.js
+### 1. Portafolio Personalizado (`Mi Portafolio`)
+*   **Gestión Detallada**: Registra tus compras de acciones indicando el ticker (ej. *CHILE*, *SQM-B*, *VAPORES*, *ANDINA-B*, *CFISPETF*), número de acciones, precio promedio de compra, fecha de adquisición y rendimiento acumulado objetivo.
+*   **Valorización en Tiempo Real**: Visualiza el capital aportado versus el valor de mercado actual actualizado automáticamente, incluyendo la variación diaria en pesos chilenos (CLP).
+*   **Métricas de Desempeño**: Cálculo del rendimiento anualizado aproximado del portafolio.
 
+### 2. Tablero de Mercado (`Bolsa de Santiago`)
+*   **Grilla Interactiva**: Una vista optimizada que simula la cotización de acciones del mercado chileno en tiempo real (datos de Yahoo Finance vía API interna / proxy).
+*   **Personalización Absoluta**: 
+    *   Puedes **eliminar/ocultar** tickers de la grilla que no te interesen para despejar tu área de trabajo.
+    *   Puedes **buscar y agregar** cualquier acción o ETF disponible (ej. cotizaciones internacionales, ETFs extranjeros o locales como *CFISPETF*).
+*   **Persistencia de Visibilidad**: Si decides ocultar acciones de la lista o agregar nuevas, estas preferencias se guardarán de forma permanente.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 3. Seguimiento de Dividendos (`Historial de Dividendos`)
+*   **Sincronización Inteligente**: Auto-carga el historial real de dividendos reportados para tus acciones directamente desde fuentes financieras según las fechas en que las has poseído.
+*   **Control de Cobro**: Marca dividendos como "Cobrados" o "Pendientes" para mantener un flujo de caja preciso.
+*   **Filtros**: Permite organizar visualmente tus retornos por año u origen.
+
+### 4. Optimizador de Impuestos (`Devolución F-22`)
+*   **Cálculo Automatizado**: Simulación de la devolución de impuesto global complementario en Chile para dividendos que otorgan crédito tributario (con o sin restitución).
+*   **Personalización de Tasas**: Ajusta la tasa proyectada del Impuesto Global Complementario (IGC) y simula el impacto neto de tus retornos en la declaración anual.
+
+### 5. Respaldo y Recuperación Integral (`Respaldo Cloud & Local`)
+*   **Consistencia Total**: El sistema incluye soporte para realizar copias de seguridad de toda tu información en un archivo JSON descargable o directo a tu cuenta de Google Drive.
+*   **Conservación de Preferencias**: A diferencia de soluciones tradicionales, el respaldo **guarda exactamente el estado de la grilla** de la "Bolsa de Santiago". Si ocultaste acciones o agregaste activos personalizados en tu sesión, la importar el respaldo se restaurarán con absoluta precisión, mostrando únicamente lo que decidiste conservar en ese momento.
+
+---
+
+## 🛠️ Stack Tecnológico
+
+*   **Frontend**: React (v18+) con TypeScript y Vite.
+*   **Estilos**: Tailwind CSS con un diseño elegante de alto contraste moderno, optimizado con tipografía clara y visualización amigable en dispositivos móviles y de escritorio.
+*   **Gráficos**: Recharts / D3 para analítica visual del portafolio y evolución de dividendos.
+*   **Animaciones**: `motion` (Framer Motion) para transiciones fluidas de pestañas e interacciones de usuario.
+*   **Persistencia**: Arquitectura híbrida integrada con **IndexedDB** como motor de base de datos relacional/documental del lado del cliente y **localStorage** como caché de sincronización rápida para preferencias de vista del navegador.
+
+---
+
+## ⚙️ Desarrollo e Instalación
+
+Para ejecutar este proyecto en tu entorno local, asegúrate de tener instalado Node.js (versión 18 o superior) o Docker.
+
+### 💻 Ejecución Local Tradicional
+
+1. **Instalar dependencias**:
+   ```bash
+   npm install
+   ```
+
+2. **Iniciar servidor de desarrollo**:
+   ```bash
+   npm run dev
+   ```
+
+3. **Compilar para producción**:
+   ```bash
+   npm run build
+   ```
+
+### 🐳 Ejecución utilizando Docker
+
+Si prefieres usar Docker para simplificar el despliegue o la ejecución, la aplicación está configurada para usar el puerto configurado mediante la variable de entorno `PORT` (puerto predeterminado: **3002**):
+
+#### Alternativa A: Usando Docker Compose (Recomendado)
+Levanta el proyecto completo con un solo comando (automáticamente usará el puerto `3002` o el valor definido de `PORT` en tu entorno):
+```bash
+docker-compose up --build
+```
+
+#### Alternativa B: Usando Docker CLI
+1. **Construir la imagen**:
+   ```bash
+   docker build -t santiago-bolsa-portafolio .
+   ```
+
+2. **Iniciar el contenedor** (puedes sobrescribir la variable `PORT` mediante `-e PORT=tu_puerto` si deseas cambiarlo; por defecto mapea el puerto `3002`):
+   ```bash
+   docker run -d -p 3002:3002 --name portafolio-chile santiago-bolsa-portafolio
+   ```
+
+La aplicación estará disponible y lista en tu navegador en [http://localhost:3002](http://localhost:3002).
+
+---
+
+## 📝 Nota del Desarrollador (IA)
+Este proyecto fue diseñado con el objetivo de proveer una experiencia de usuario extremadamente pulida y profesional para inversores del retail en Chile. Todo el código, la lógica de simulación, la persistencia en IndexedDB y la sincronización con Yahoo Finance fueron cuidadosamente ensamblados por la IA interpretando fielmente los requerimientos informados.
