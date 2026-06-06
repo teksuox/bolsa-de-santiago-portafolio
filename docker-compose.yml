@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: simulador-bolsa-santiago:latest
+    container_name: bolsa-santiago-simulador
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta y ingresa tu clave si se requiere Gemini API
+    restart: unless-stopped

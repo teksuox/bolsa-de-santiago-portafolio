@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e293b" />
+    </linearGradient>
+    <linearGradient id="chartGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+    <linearGradient id="chileBlue" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0039a6" />
+      <stop offset="100%" stop-color="#002d84" />
+    </linearGradient>
+    <linearGradient id="chileRed" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#d52b1e" />
+      <stop offset="100%" stop-color="#b11f15" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded card -->
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+
+  <!-- Elegant dotted outer border -->
+  <rect x="32" y="32" width="448" height="448" rx="86" fill="none" stroke="#334155" stroke-width="6" stroke-dasharray="14 10" />
+
+  <!-- Financial charts visual (Emerald/Teal columns) -->
+  <g transform="translate(90, 160)">
+    <!-- Column 1 -->
+    <rect x="10" y="140" width="36" height="80" rx="8" fill="url(#chartGrad)" opacity="0.4" />
+    <!-- Column 2 -->
+    <rect x="70" y="90" width="36" height="130" rx="8" fill="url(#chartGrad)" opacity="0.65" />
+    <!-- Column 3 -->
+    <rect x="130" y="40" width="36" height="180" rx="8" fill="url(#chartGrad)" opacity="0.85" />
+    <!-- Column 4 -->
+    <rect x="190" y="0" width="36" height="220" rx="8" fill="url(#chartGrad)" />
+    
+    <!-- Glowing Upward arrow line -->
+    <path d="M 28,150 L 88,100 L 148,50 L 208,10" fill="none" stroke="#2dd4bf" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 166,10 L 208,10 L 208,52" fill="none" stroke="#2dd4bf" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Chilean Flag colors stripes at the bottom -->
+  <g transform="translate(64, 410)">
+    <rect x="0" y="10" width="192" height="18" rx="4" fill="url(#chileBlue)" />
+    <rect x="192" y="10" width="192" height="18" rx="4" fill="url(#chileRed)" />
+    <rect x="0" y="0" width="384" height="10" rx="2" fill="#ffffff" opacity="0.95" />
+  </g>
+
+  <!-- Beautiful star/badge representating Bolsa de Santiago and Chile PWA -->
+  <circle cx="360" cy="180" r="54" fill="url(#chileBlue)" stroke="#e2e8f0" stroke-width="5" />
+  <!-- Star of Chile -->
+  <polygon points="360,138 373,166 403,166 379,185 389,213 360,195 331,213 341,185 317,166 347,166" fill="#ffffff" />
+</svg>

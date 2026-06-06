@@ -1,0 +1,6 @@
+{
+  "name": "Bolsa de Santiago Portafolio",
+  "description": "Plataforma interactiva para el control de acciones, dividendos, devolución de impuestos y rentabilidad del mercado chileno.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
