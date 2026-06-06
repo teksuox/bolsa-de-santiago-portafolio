@@ -31,7 +31,20 @@ export default function App() {
   const [annualPerformancePercent, setAnnualPerformancePercent] = useState<number>(8.5);
 
   // Master market reference rates
-  const [marketStocks, setMarketStocks] = useState<MarketStock[]>(INITIAL_MARKET_STOCKS);
+  const [marketStocks, setMarketStocks] = useState<MarketStock[]>(() => {
+    try {
+      const saved = localStorage.getItem('custom_searched_stocks');
+      const parsed = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // Filter out any duplicates
+        const customOnly = parsed.filter((cs: MarketStock) => cs && cs.ticker && !INITIAL_MARKET_STOCKS.some(s => s.ticker === cs.ticker));
+        return [...INITIAL_MARKET_STOCKS, ...customOnly];
+      }
+    } catch (e) {
+      console.warn('Error reading custom_searched_stocks:', e);
+    }
+    return INITIAL_MARKET_STOCKS;
+  });
   const [isSyncingDividends, setIsSyncingDividends] = useState<boolean>(false);
 
   // Price alerts and voice/audio notifications state
@@ -184,14 +197,59 @@ export default function App() {
   const handleRefreshMarketData = async (silent: boolean = false) => {
     if (!silent) setIsRefreshing(true);
     try {
-      const marketResponse = await fetch('/api/market-stocks');
+      // Collect additional tickers to fetch
+      const additionalTickersSet = new Set<string>();
+      
+      // Load custom searched ones
+      try {
+        const saved = localStorage.getItem('custom_searched_stocks');
+        const parsed = saved ? JSON.parse(saved) : [];
+        if (Array.isArray(parsed)) {
+          parsed.forEach((s: any) => {
+            if (s && s.ticker) additionalTickersSet.add(s.ticker.toUpperCase());
+          });
+        }
+      } catch (e) {
+        console.warn('Error reading custom searched tickers in refresh:', e);
+      }
+
+      // Load owned ones
+      holdings.forEach(h => {
+        if (h && h.ticker) additionalTickersSet.add(h.ticker.toUpperCase());
+      });
+
+      const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+      const additionalList = Array.from(additionalTickersSet)
+        .filter(t => !standardTickers.includes(t));
+
+      const queryUrl = additionalList.length > 0
+        ? `/api/market-stocks?additional=${encodeURIComponent(additionalList.join(','))}`
+        : '/api/market-stocks';
+
+      const marketResponse = await fetch(queryUrl);
       if (marketResponse.ok) {
         const quotes = await marketResponse.json();
         if (quotes && quotes.length > 0) {
           // 1. Update Market reference list
           setMarketStocks(prev => {
             const customStocks = prev.filter(p => !quotes.some((q: any) => q.ticker === p.ticker));
-            return [...quotes, ...customStocks];
+            const updatedList = [...quotes, ...customStocks];
+            
+            // Sync updated custom stock details back to localStorage to preserve latest price/yield
+            const finalCustomSavedList = updatedList.filter(s => !standardTickers.includes(s.ticker));
+            if (finalCustomSavedList.length > 0) {
+              try {
+                localStorage.setItem('custom_searched_stocks', JSON.stringify(finalCustomSavedList));
+              } catch (e) {
+                console.warn('Error saving updated custom_searched_stocks:', e);
+              }
+
+              // Sync to IndexedDB for complete persistence/cloud backup
+              for (const s of finalCustomSavedList) {
+                portafolioDB.saveCustomStock(s).catch(err => console.error('Error auto-syncing custom stock to DB during refresh:', err));
+              }
+            }
+            return updatedList;
           });
 
           // 2. Refresh active holdings pricing
@@ -243,6 +301,7 @@ export default function App() {
     setDeletedStocks(prev => {
       const updated = prev.includes(ticker) ? prev : [...prev, ticker];
       localStorage.setItem('deleted_market_tickers', JSON.stringify(updated));
+      portafolioDB.saveDeletedTickers(updated).catch(err => console.error('Error saving deleted stocks to IndexedDB:', err));
       return updated;
     });
   };
@@ -250,6 +309,7 @@ export default function App() {
   const handleRestoreAllMarketStocks = () => {
     setDeletedStocks([]);
     localStorage.removeItem('deleted_market_tickers');
+    portafolioDB.saveDeletedTickers([]).catch(err => console.error('Error clearing deleted stocks in IndexedDB:', err));
   };
 
   // Synchronize dividends from Chile corporate actions (Yahoo F.) based on holdings
@@ -306,22 +366,94 @@ export default function App() {
         const storedDividends = await portafolioDB.getDividends();
         const storedRefunds = await portafolioDB.getRefunds();
         const storedYield = await portafolioDB.getAnnualYield();
+        const storedCustomStocks = await portafolioDB.getCustomStocks();
+        const storedDeletedTickers = await portafolioDB.getDeletedTickers();
 
         setHoldings(storedHoldings);
         setDividends(storedDividends);
         setRefunds(storedRefunds);
         setAnnualPerformancePercent(storedYield);
 
-        // Fetch real-time market stock prices!
+        if (storedDeletedTickers) {
+          setDeletedStocks(storedDeletedTickers);
+          try {
+            localStorage.setItem('deleted_market_tickers', JSON.stringify(storedDeletedTickers));
+          } catch (e) {
+            console.warn('Error saving deleted stocks to localstorage on mount:', e);
+          }
+        }
+
+        if (storedCustomStocks) {
+          const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+          const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+          setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
+          try {
+            localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
+          } catch (e) {
+            console.warn('Error saving custom stocks to localstorage on mount:', e);
+          }
+        }
+
+        // Fetch real-time market stock prices, including custom searched ones and ones from personal holdings!
         try {
-          const marketResponse = await fetch('/api/market-stocks');
+          const additionalTickersSet = new Set<string>();
+          
+          if (storedCustomStocks && storedCustomStocks.length > 0) {
+            storedCustomStocks.forEach(s => {
+              if (s && s.ticker) additionalTickersSet.add(s.ticker.toUpperCase());
+            });
+          }
+          
+          // Load custom searched ones (fallback and legacy compatibility)
+          try {
+            const saved = localStorage.getItem('custom_searched_stocks');
+            const parsed = saved ? JSON.parse(saved) : [];
+            if (Array.isArray(parsed)) {
+              parsed.forEach((s: any) => {
+                if (s && s.ticker) additionalTickersSet.add(s.ticker.toUpperCase());
+              });
+            }
+          } catch (e) {
+            console.warn('Error reading custom searched tickers on mount:', e);
+          }
+
+          // Load owned ones from db
+          storedHoldings.forEach(h => {
+            if (h && h.ticker) additionalTickersSet.add(h.ticker.toUpperCase());
+          });
+
+          const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+          const additionalList = Array.from(additionalTickersSet)
+            .filter(t => !standardTickers.includes(t));
+
+          const queryUrl = additionalList.length > 0
+            ? `/api/market-stocks?additional=${encodeURIComponent(additionalList.join(','))}`
+            : '/api/market-stocks';
+
+          const marketResponse = await fetch(queryUrl);
           if (marketResponse.ok) {
             const quotes = await marketResponse.json();
             if (quotes && quotes.length > 0) {
               // 1. Update Market reference list
               setMarketStocks(prev => {
                 const customStocks = prev.filter(p => !quotes.some((q: any) => q.ticker === p.ticker));
-                return [...quotes, ...customStocks];
+                const updatedList = [...quotes, ...customStocks];
+                
+                // Sync updated custom stock details back to localStorage & IndexedDB
+                const finalCustomSavedList = updatedList.filter(s => !standardTickers.includes(s.ticker));
+                if (finalCustomSavedList.length > 0) {
+                  try {
+                    localStorage.setItem('custom_searched_stocks', JSON.stringify(finalCustomSavedList));
+                  } catch (e) {
+                    console.warn('Error saving updated custom_searched_stocks:', e);
+                  }
+                  
+                  // Save custom stocks in IndexedDB as well
+                  for (const s of finalCustomSavedList) {
+                    portafolioDB.saveCustomStock(s).catch(err => console.error('Error auto-syncing custom stock to DB on mount:', err));
+                  }
+                }
+                return updatedList;
               });
 
               // 2. Refresh active holdings pricing
@@ -379,6 +511,38 @@ export default function App() {
     const id = `h-${Date.now()}`;
     const holding: StockHolding = { ...newHolding, id };
     
+    // Register the ticker as a custom searched stock if it doesn't already exist in our marketStocks reference list
+    if (newHolding.ticker && !marketStocks.some(s => s.ticker === newHolding.ticker)) {
+      const parsedStock: MarketStock = {
+        ticker: newHolding.ticker,
+        name: newHolding.name || `${newHolding.ticker} S.A.`,
+        price: newHolding.buyPrice,
+        changePercent: 0,
+        dividendYield: newHolding.annualTargetYield || 6.0,
+        sector: 'Portafolio Personal',
+        volumeCLP: 1000000
+      };
+
+      try {
+        const saved = localStorage.getItem('custom_searched_stocks');
+        const parsed = saved ? JSON.parse(saved) : [];
+        if (!parsed.some((s: MarketStock) => s.ticker === parsedStock.ticker)) {
+          parsed.push(parsedStock);
+          localStorage.setItem('custom_searched_stocks', JSON.stringify(parsed));
+        }
+      } catch (e) {
+        console.error('Error auto-persisting holding ticker as custom searched stock:', e);
+      }
+
+      // Save custom stock in IndexedDB as well
+      portafolioDB.saveCustomStock(parsedStock).catch(err => console.error('Error auto-persisting custom stock to IndexedDB:', err));
+
+      setMarketStocks(prev => {
+        if (prev.some(s => s.ticker === parsedStock.ticker)) return prev;
+        return [...prev, parsedStock];
+      });
+    }
+
     // Optimistic UI state update
     const updatedHoldings = [...holdings, holding];
     setHoldings(updatedHoldings);
@@ -551,11 +715,25 @@ export default function App() {
       const storedDividends = await portafolioDB.getDividends();
       const storedRefunds = await portafolioDB.getRefunds();
       const storedYield = await portafolioDB.getAnnualYield();
+      const storedCustomStocks = await portafolioDB.getCustomStocks();
+      const storedDeletedTickers = await portafolioDB.getDeletedTickers();
 
       setHoldings(storedHoldings);
       setDividends(storedDividends);
       setRefunds(storedRefunds);
       setAnnualPerformancePercent(storedYield);
+      setDeletedStocks(storedDeletedTickers);
+      
+      const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+      const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+      setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
+      
+      try {
+        localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
+        localStorage.setItem('deleted_market_tickers', JSON.stringify(storedDeletedTickers));
+      } catch (e) {
+        console.warn('Error saving updated custom_searched_stocks on import:', e);
+      }
     } catch (err) {
       console.error('Error importing backup:', err);
       throw err;
@@ -569,6 +747,14 @@ export default function App() {
       setDividends([]);
       setRefunds([]);
       setAnnualPerformancePercent(8.5);
+      setDeletedStocks([]);
+      setMarketStocks(INITIAL_MARKET_STOCKS);
+      try {
+        localStorage.removeItem('custom_searched_stocks');
+        localStorage.removeItem('deleted_market_tickers');
+      } catch (e) {
+        console.warn(e);
+      }
     } catch (err) {
       console.error('Error clearing data:', err);
       alert('No se pudo borrar los datos locales.');
@@ -696,9 +882,26 @@ export default function App() {
                       setDeletedStocks(prev => {
                         const updated = prev.filter(t => t !== newStock.ticker);
                         localStorage.setItem('deleted_market_tickers', JSON.stringify(updated));
+                        portafolioDB.saveDeletedTickers(updated).catch(err => console.error('Error saving updated deleted list:', err));
                         return updated;
                       });
                     }
+
+                    // Save custom searched stock back to localStorage so it persists across reloads
+                    try {
+                      const saved = localStorage.getItem('custom_searched_stocks');
+                      const parsed = saved ? JSON.parse(saved) : [];
+                      if (!parsed.some((s: MarketStock) => s.ticker === newStock.ticker)) {
+                        parsed.push(newStock);
+                        localStorage.setItem('custom_searched_stocks', JSON.stringify(parsed));
+                      }
+                    } catch (e) {
+                      console.error('Error saving searched stock to custom_searched_stocks cache:', e);
+                    }
+
+                    // Save custom searched stock to IndexedDB as well for cloud backup
+                    portafolioDB.saveCustomStock(newStock).catch(err => console.error('Error saving custom stock to IndexedDB:', err));
+
                     setMarketStocks(prev => {
                       if (prev.some(s => s.ticker === newStock.ticker)) return prev;
                       return [...prev, newStock];
@@ -724,11 +927,24 @@ export default function App() {
                       const storedDividends = await portafolioDB.getDividends();
                       const storedRefunds = await portafolioDB.getRefunds();
                       const storedYield = await portafolioDB.getAnnualYield();
+                      const storedCustomStocks = await portafolioDB.getCustomStocks();
+                      const storedDeletedTickers = await portafolioDB.getDeletedTickers();
                       
                       setHoldings(storedHoldings);
                       setDividends(storedDividends);
                       setRefunds(storedRefunds);
                       setAnnualPerformancePercent(storedYield);
+                      setDeletedStocks(storedDeletedTickers);
+                      
+                      const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+                      const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+                      setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
+                      try {
+                        localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
+                        localStorage.setItem('deleted_market_tickers', JSON.stringify(storedDeletedTickers));
+                      } catch (e) {
+                        console.warn('Error saving updated custom_searched_stocks or deleted tickers on cloud restore:', e);
+                      }
                       
                       setActiveTab('dashboard');
                     } catch (err) {
