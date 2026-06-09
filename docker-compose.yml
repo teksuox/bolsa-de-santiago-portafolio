@@ -1,23 +1,77 @@
+version: '3.8'
+
 services:
+  # Backend - Node.js con React
   app:
     build:
       context: .
       dockerfile: Dockerfile
-    image: simulador-bolsa-santiago:latest
-    container_name: bolsa-santiago-simulador
+    image: portafolio-backend:latest
+    container_name: portafolio-backend
     ports:
       - "${PORT:-3002}:${PORT:-3002}"
     environment:
-      - PORT=${PORT:-3002}
       - NODE_ENV=production
-      # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta y ingresa tu clave si se requiere Gemini API
+      - PORT=${PORT:-3002}
+      # URL de PocketBase para comunicación interna (dentro de Docker)
+      - POCKETBASE_URL=http://pocketbase:8090
+    depends_on:
+      pocketbase:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - portafolio-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-3002}" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # PocketBase - Base de datos y autenticación (imagen personalizada)
   pocketbase:
-    image: pocketbase/pocketbase:latest
-    container_name: bolsa-santiago-pocketbase
+    build:
+      context: .
+      dockerfile: Dockerfile.pocketbase
+    image: portafolio-pocketbase:latest
+    container_name: portafolio-pocketbase
     ports:
       - "8090:8090"
     volumes:
       - ./pocketbase_data:/pb_data
     restart: unless-stopped
+    networks:
+      - portafolio-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Nginx - Reverse Proxy (Opcional pero recomendado)
+  nginx:
+    image: nginx:alpine
+    container_name: portafolio-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Descomentar si usas SSL/TLS
+      # - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+      - pocketbase
+    restart: unless-stopped
+    networks:
+      - portafolio-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  portafolio-network:
+    driver: bridge

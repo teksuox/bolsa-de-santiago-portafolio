@@ -1,0 +1,51 @@
+# Dockerfile para PocketBase - Imagen personalizada
+
+# Stage 1: Descargar y preparar PocketBase
+FROM alpine:latest AS downloader
+
+# Instalar herramientas necesarias
+RUN apk add --no-cache curl unzip ca-certificates
+
+# Descargar PocketBase v0.39.3
+RUN mkdir -p /pb_download && \
+    cd /pb_download && \
+    curl -L -o pocketbase.zip https://github.com/pocketbase/pocketbase/releases/download/v0.39.3/pocketbase_0.39.3_linux_amd64.zip && \
+    unzip pocketbase.zip && \
+    chmod +x pocketbase && \
+    rm pocketbase.zip
+
+# Stage 2: Runtime image
+FROM alpine:latest
+
+# Instalar dependencias en runtime
+RUN apk add --no-cache ca-certificates tzdata bash curl
+
+# Crear usuario no-root para seguridad
+RUN addgroup -g 1000 pocketbase && \
+    adduser -D -u 1000 -G pocketbase pocketbase
+
+# Copiar binario de PocketBase desde stage anterior
+COPY --from=downloader /pb_download/pocketbase /pb/pocketbase
+
+# Crear directorios necesarios
+RUN mkdir -p /pb_data && \
+    chown -R pocketbase:pocketbase /pb && \
+    chown -R pocketbase:pocketbase /pb_data
+
+# Cambiar a usuario no-root
+USER pocketbase
+
+# Directorio de trabajo
+WORKDIR /pb
+
+# Exponer puerto
+EXPOSE 8090
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8090/api/health || exit 1
+
+# Comando para ejecutar PocketBase
+# --dir especifica donde guardar los datos
+# --http especifica en qué puerto escuchar
+CMD ["./pocketbase", "serve", "--dir", "/pb_data", "--http", "0.0.0.0:8090"]
