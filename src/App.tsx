@@ -12,7 +12,9 @@ import MarketWatch from './components/MarketWatch';
 import DividendTracker from './components/DividendTracker';
 import TaxRefunds from './components/TaxRefunds';
 import ChartsAndAnalytics from './components/ChartsAndAnalytics';
-import DriveBackup from './components/DriveBackup';
+import PocketBaseSync from './components/PocketBaseSync';
+import { pb } from './lib/pocketbase';
+import { DBBackupData } from './db';
 
 import { StockHolding, DividendPayment, TaxRefund, MarketStock, StockAlert } from './types';
 import {
@@ -506,6 +508,104 @@ export default function App() {
     loadData();
   }, []);
 
+  // Listen to PocketBase Auth
+  const [pbLoggedIn, setPbLoggedIn] = useState(() => pb.authStore.isValid);
+
+  useEffect(() => {
+    const unsubscribe = pb.authStore.onChange((token, model) => {
+      setPbLoggedIn(!!token);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 1. Real-time Subscription (Incoming changes from PocketBase cloud)
+  useEffect(() => {
+    if (!pbLoggedIn || !pb.authStore.model) return;
+    const userId = pb.authStore.model.id;
+    let isSubscribed = false;
+
+    const setupSubscription = async () => {
+      try {
+        await pb.collection('portafolios').subscribe('*', async (e) => {
+          if (e.action === 'update' && e.record.user === userId && localStorage.getItem('pb_autosync_enabled') === 'true') {
+            const incomingData = e.record.data as DBBackupData;
+            if (!incomingData) return;
+
+            // Deep stringify comparison
+            const currentLocal = await portafolioDB.exportBackup();
+            if (JSON.stringify(currentLocal) !== JSON.stringify(incomingData)) {
+              console.log('📬 PocketBase: ¡Actualización entrante en tiempo real aplicada!');
+              await portafolioDB.importBackup(incomingData);
+
+              // Update states
+              setHoldings(incomingData.holdings || []);
+              setDividends(incomingData.dividends || []);
+              setRefunds(incomingData.refunds || []);
+              setAnnualPerformancePercent(incomingData.annualPerformancePercent ?? 8.5);
+              setDeletedStocks(incomingData.deletedTickers || []);
+
+              if (incomingData.customStocks) {
+                const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
+                const customOnly = incomingData.customStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+                setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
+                localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
+              }
+            }
+          }
+        });
+        isSubscribed = true;
+      } catch (err) {
+        console.warn('Subscription error:', err);
+      }
+    };
+
+    setupSubscription();
+
+    return () => {
+      if (isSubscribed) {
+        pb.collection('portafolios').unsubscribe('*').catch(() => {});
+      }
+    };
+  }, [pbLoggedIn]);
+
+  // 2. Autosync Debounce (Outgoing changes to PocketBase cloud)
+  useEffect(() => {
+    const isAutosync = localStorage.getItem('pb_autosync_enabled') === 'true';
+    if (!isAutosync || !pbLoggedIn || !pb.authStore.model || isLoading) return;
+
+    const serializeAndUpload = async () => {
+      try {
+        const localData = await portafolioDB.exportBackup();
+        
+        // Search & compare if we actually need to upload or if server is already identical
+        const records = await pb.collection('portafolios').getFullList({
+          filter: `user = "${pb.authStore.model?.id}"`,
+          requestKey: null
+        });
+        if (records.length > 0) {
+          const currentRemoteData = records[0].data;
+          if (JSON.stringify(currentRemoteData) === JSON.stringify(localData)) {
+            return; // Already in-sync
+          }
+        }
+        
+        // Perform sync upload
+        const userId = pb.authStore.model?.id;
+        if (records.length > 0) {
+          await pb.collection('portafolios').update(records[0].id, { data: localData }, { requestKey: null });
+        } else {
+          await pb.collection('portafolios').create({ user: userId, data: localData }, { requestKey: null });
+        }
+        console.log('🚀 PocketBase: ¡Portafolio autosincronizado con éxito!');
+      } catch (err) {
+        console.warn('Auto-sync error:', err);
+      }
+    };
+
+    const timer = setTimeout(serializeAndUpload, 1500);
+    return () => clearTimeout(timer);
+  }, [holdings, dividends, refunds, annualPerformancePercent, marketStocks, deletedStocks, pbLoggedIn, isLoading]);
+
   // Handlers for Portfolio
   const handleAddHolding = async (newHolding: Omit<StockHolding, 'id'>) => {
     const id = `h-${Date.now()}`;
@@ -920,7 +1020,7 @@ export default function App() {
               )}
 
               {activeTab === 'backup' && (
-                <DriveBackup
+                <PocketBaseSync
                   onDataRestored={async () => {
                     try {
                       const storedHoldings = await portafolioDB.getHoldings();
@@ -951,6 +1051,12 @@ export default function App() {
                       console.error('Error al recargar datos importados:', err);
                     }
                   }}
+                  holdings={holdings}
+                  dividends={dividends}
+                  refunds={refunds}
+                  annualPerformancePercent={annualPerformancePercent}
+                  marketStocks={marketStocks}
+                  deletedStocks={deletedStocks}
                 />
               )}
             </motion.div>

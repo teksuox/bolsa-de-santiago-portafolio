@@ -29,9 +29,9 @@ Este proyecto es un sistema interactivo y moderno para gestionar portafolios de 
 *   **Cálculo Automatizado**: Simulación de la devolución de impuesto global complementario en Chile para dividendos que otorgan crédito tributario (con o sin restitución).
 *   **Personalización de Tasas**: Ajusta la tasa proyectada del Impuesto Global Complementario (IGC) y simula el impacto neto de tus retornos en la declaración anual.
 
-### 5. Respaldo y Recuperación Integral (`Respaldo Cloud & Local`)
-*   **Consistencia Total**: El sistema incluye soporte para realizar copias de seguridad de toda tu información en un archivo JSON descargable o directo a tu cuenta de Google Drive.
-*   **Conservación de Preferencias**: A diferencia de soluciones tradicionales, el respaldo **guarda exactamente el estado de la grilla** de la "Bolsa de Santiago". Si ocultaste acciones o agregaste activos personalizados en tu sesión, la importar el respaldo se restaurarán con absoluta precisión, mostrando únicamente lo que decidiste conservar en ese momento.
+### 5. Sincronización en Tiempo Real (`PocketBase Cloud & Local`)
+*   **Sincronización Multidispositivo**: El sistema integra soporte completo para **PocketBase**, permitiendo que cualquier cambio (compras de acciones, dividendos ingresados, tasas de impuestos o tickers ocultos en la grilla) se actualice automáticamente en tiempo real en todos tus dispositivos y ordenadores.
+*   **Conservación de Preferencias**: A diferencia de soluciones tradicionales, el respaldo **guarda exactamente el estado de la grilla** de la "Bolsa de Santiago". Si ocultaste acciones o agregaste activos personalizados en tu sesión, al importar el respaldo se restaurarán con absoluta precisión, mostrando únicamente lo que decidiste conservar en ese momento.
 
 ---
 
@@ -70,24 +70,40 @@ Para ejecutar este proyecto en tu entorno local, asegúrate de tener instalado N
 
 Si prefieres usar Docker para simplificar el despliegue o la ejecución, la aplicación está configurada para usar el puerto configurado mediante la variable de entorno `PORT` (puerto predeterminado: **3002**):
 
-#### Alternativa A: Usando Docker Compose (Recomendado)
-Levanta el proyecto completo con un solo comando (automáticamente usará el puerto `3002` o el valor definido de `PORT` en tu entorno):
+#### Alternativa A: Usando Docker Compose (Recomendado con PocketBase)
+Levanta el simulador del portafolio y el servidor **PocketBase** de forma simultánea con un único comando:
 ```bash
 docker-compose up --build
 ```
+Al finalizar, tendrás disponibles:
+- **Simulador de Bolsa de Santiago**: [http://localhost:3002](http://localhost:3002) (o el puerto que definas en `PORT`)
+- **Panel Administrativo de PocketBase**: [http://localhost:8090/_/](http://localhost:8090/_/)
 
-#### Alternativa B: Usando Docker CLI
+#### 🚀 Configurando PocketBase por primera vez:
+Para que la auto-sincronización y el tiempo real funcionen, debes inicializar tu colección en PocketBase:
+1. Entra a [http://localhost:8090/_/](http://localhost:8090/_/) y crea tu cuenta de administrador inicial.
+2. Pulsa en **"New Collection"** y nómbrala exactamente: `portafolios`.
+3. Agrega los siguientes campos en el editor visual:
+   - `user`: Tipo **Relation** apuntando a `users`. Marca `"Max Select" = 1` y `"Non-empty (Required)" = Sí`.
+   - `data`: Tipo **JSON**. Marca `"Non-empty (Required)" = Sí`.
+4. Ve a la pestaña **"API Rules"** de la colección `portafolios` e ingresa la siguiente regla en los campos **List, View, Create y Update**:
+   ```
+   user = @request.auth.id
+   ```
+5. ¡Listo! Ya puedes ir al Simulador, ingresar al menú **Sincronización Cloud**, crear tu usuario normal e iniciar la auto-sincronización en tiempo real.
+
+#### Alternativa B: Usando Docker CLI (Solo App)
 1. **Construir la imagen**:
    ```bash
    docker build -t santiago-bolsa-portafolio .
    ```
 
-2. **Iniciar el contenedor** (puedes sobrescribir la variable `PORT` mediante `-e PORT=tu_puerto` si deseas cambiarlo; por defecto mapea el puerto `3002`):
+2. **Iniciar el contenedor**:
    ```bash
    docker run -d -p 3002:3002 --name portafolio-chile santiago-bolsa-portafolio
    ```
 
-La aplicación estará disponible y lista en tu navegador en [http://localhost:3002](http://localhost:3002).
+La aplicación estará disponible y lista en tu navegador en [http://localhost:3002](http://localhost:3002). Si utilizas este método individual, puedes conectar la aplicación a cualquier instancia externa o local de PocketBase que tengas disponible de forma manual introduciendo su dirección IP o URL en la pestaña de configuración.
 
 ---
 

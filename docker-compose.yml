@@ -12,3 +12,12 @@ services:
       - NODE_ENV=production
       # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta y ingresa tu clave si se requiere Gemini API
     restart: unless-stopped
+
+  pocketbase:
+    image: pocketbase/pocketbase:latest
+    container_name: bolsa-santiago-pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pocketbase_data:/pb_data
+    restart: unless-stopped
