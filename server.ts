@@ -17,6 +17,7 @@ const CURRENT_DATE_STRING = '2026-06-04';
 // Correct real fallback values for Chile index indicators in case of API failure
 const FALLBACK_UF = 40763.26;
 const FALLBACK_UTM = 66224.00;
+const FALLBACK_USD = 894.99;
 
 const INITIAL_MARKET_STOCKS_BACKUP = [
   { ticker: "CHILE", name: "Banco de Chile", price: 166.14, changePercent: 0.85, dividendYield: 8.4, sector: "Financiero", volumeCLP: 1845000000 },
@@ -195,7 +196,7 @@ async function startServer() {
         name: companyName,
         price: Math.round(price * 100) / 100,
         changePercent: Math.round(changePercent * 100) / 100,
-        dividendYield: Math.round(dividendYield * 10) / 10,
+        dividendYield: Math.round(dividendYield * 100) / 100,
         sector: backupItem ? backupItem.sector : "Bolsa de Santiago",
         volumeCLP: Math.round(volumeCLP)
       };
@@ -294,10 +295,7 @@ async function startServer() {
       return res.json(indicatorsCache.data);
     }
 
-    // Default 2026 updated fallbacks based on real SII indices
-    const FALLBACK_UF = 40763.26;
-    const FALLBACK_UTM = 66224.00;
-    const FALLBACK_USD = 894.99;
+    // Use global fallback constants defined at the top
     
     let ufVal = FALLBACK_UF;
     let utmVal = FALLBACK_UTM;
