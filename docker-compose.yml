@@ -14,10 +14,33 @@ services:
     restart: unless-stopped
 
   pocketbase:
-    image: pocketbase/pocketbase:latest
+    image: ghcr.io/muchobien/pocketbase:latest
     container_name: bolsa-santiago-pocketbase
+    environment:
+      # Optional: Configure host and port (defaults: 0.0.0.0:8090)
+      PB_HOST: 0.0.0.0
+      PB_PORT: 8090
+      # Optional: Auto-create superuser (recommended for production)
+      PB_ADMIN_EMAIL: teksuox@gmail.com
+      PB_ADMIN_PASSWORD: chi002100
+      # Optional: Set timezone
+      TZ: América/Santiago
     ports:
       - "8090:8090"
     volumes:
       - ./pocketbase_data:/pb_data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8090/api/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     restart: unless-stopped
