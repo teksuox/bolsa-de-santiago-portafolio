@@ -4,6 +4,7 @@
  */
 
 import { StockHolding, DividendPayment, TaxRefund, MarketStock } from './types';
+import { normalizeTicker } from './utils';
 
 const DB_NAME = 'BolsaSantiagoPortafolioDB';
 const DB_VERSION = 2;
@@ -543,11 +544,26 @@ export const portafolioDB = {
     for (const r of refunds) {
       if (r.id && r.year) await this.saveRefund(r);
     }
+    const seenTickers = new Set<string>();
     for (const s of customStocks) {
-      if (s.ticker) await this.saveCustomStock(s);
+      if (s.ticker) {
+        const normalized = normalizeTicker(s.ticker);
+        const stock = { ...s, ticker: normalized };
+        if (!seenTickers.has(normalized)) {
+          seenTickers.add(normalized);
+          await this.saveCustomStock(stock);
+        }
+      }
+    }
+    const seenDeleted = new Set<string>();
+    for (const t of deletedTickers) {
+      const normalized = normalizeTicker(t);
+      if (!seenDeleted.has(normalized)) {
+        seenDeleted.add(normalized);
+      }
     }
     await this.saveAnnualYield(yieldValue);
-    await this.saveDeletedTickers(deletedTickers);
+    await this.saveDeletedTickers(Array.from(seenDeleted));
   },
 
   // TRUNCATE DEMO DATA

@@ -3,44 +3,38 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: simulador-bolsa-santiago:latest
-    container_name: bolsa-santiago-simulador
+    image: portafolio-bolsa-app:latest
+    container_name: portafolio-bolsa-app
     ports:
       - "${PORT:-3002}:${PORT:-3002}"
     environment:
       - PORT=${PORT:-3002}
       - NODE_ENV=production
-      # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta y ingresa tu clave si se requiere Gemini API
+      - POCKETBASE_URL=http://pocketbase:8090
+      - PB_EXTERNAL_PORT=8091
+    depends_on:
+      - pocketbase
     restart: unless-stopped
+    networks:
+      - portafolio-net
 
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
-    container_name: bolsa-santiago-pocketbase
-    environment:
-      # Optional: Configure host and port (defaults: 0.0.0.0:8090)
-      PB_HOST: 0.0.0.0
-      PB_PORT: 8090
-      # Optional: Auto-create superuser (recommended for production)
-      PB_ADMIN_EMAIL: teksuox@gmail.com
-      PB_ADMIN_PASSWORD: chi002100
-      # Optional: Set timezone
-      TZ: América/Santiago
+    build:
+      context: .
+      dockerfile: Dockerfile.pocketbase
+    image: portafolio-bolsa-pocketbase:latest
+    container_name: portafolio-bolsa-pocketbase
     ports:
-      - "8090:8090"
+      - "8091:8090"
     volumes:
-      - ./pocketbase_data:/pb_data
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--no-verbose",
-          "--tries=1",
-          "--spider",
-          "http://localhost:8090/api/health",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      - pocketbase_data:/pb_data
     restart: unless-stopped
+    networks:
+      - portafolio-net
+
+networks:
+  portafolio-net:
+    driver: bridge
+
+volumes:
+  pocketbase_data:

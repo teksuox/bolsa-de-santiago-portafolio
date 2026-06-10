@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { DividendPayment, StockHolding } from '../types';
 import { formatCLP, formatDateChilean } from '../utils';
+import { useSortable } from '../lib/useSortable';
 import { 
   Calendar, 
   PlusCircle, 
@@ -17,12 +18,16 @@ import {
   ChevronLeft, 
   ChevronRight, 
   TrendingUp, 
-  DollarSign 
+  DollarSign,
+  Edit2,
+  Check,
+  X
 } from 'lucide-react';
 
 interface DividendTrackerProps {
   dividends: DividendPayment[];
   onAddDividend: (dividend: Omit<DividendPayment, 'id'>) => void;
+  onUpdateDividend?: (id: string, updates: Partial<DividendPayment>) => void;
   onToggleReceived: (id: string) => void;
   onDeleteDividend: (id: string) => void;
   holdings: StockHolding[];
@@ -40,6 +45,7 @@ const WEEK_DAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 export default function DividendTracker({
   dividends,
   onAddDividend,
+  onUpdateDividend,
   onToggleReceived,
   onDeleteDividend,
   holdings,
@@ -49,6 +55,7 @@ export default function DividendTracker({
   const [ticker, setTicker] = useState(holdings[0]?.ticker || 'CHILE');
   const [amountPerShare, setAmountPerShare] = useState<number | ''>('');
   const [payoutDate, setPayoutDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [cutoffDate, setCutoffDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [received, setReceived] = useState(true);
 
   const [formOpen, setFormOpen] = useState(false);
@@ -58,6 +65,41 @@ export default function DividendTracker({
   const [currentMonth, setCurrentMonth] = useState(() => new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(() => new Date().getFullYear());
 
+  // Edit state
+  const [editDivId, setEditDivId] = useState<string | null>(null);
+  const [editAmountPerShare, setEditAmountPerShare] = useState<number | ''>('');
+  const [editPayoutDate, setEditPayoutDate] = useState('');
+  const [editCutoffDate, setEditCutoffDate] = useState('');
+  const [editReceived, setEditReceived] = useState(false);
+
+  const startEdit = (div: DividendPayment) => {
+    setEditDivId(div.id);
+    setEditAmountPerShare(div.amountPerShare);
+    setEditPayoutDate(div.payoutDate);
+    setEditCutoffDate(div.cutoffDate || '');
+    setEditReceived(div.received);
+  };
+
+  const saveEdit = () => {
+    if (!editDivId || !editAmountPerShare || editAmountPerShare <= 0) return;
+    const original = dividends.find(d => d.id === editDivId);
+    if (!original) return;
+    const amt = Number(editAmountPerShare);
+    const sharesCount = calcSharesAtDate(original.ticker, editCutoffDate || original.cutoffDate || '');
+    onUpdateDividend?.(editDivId, {
+      amountPerShare: amt,
+      sharesCount,
+      totalAmount: sharesCount * amt,
+      payoutDate: editPayoutDate,
+      cutoffDate: editCutoffDate || undefined,
+      received: editReceived,
+      estimated: false,
+    });
+    setEditDivId(null);
+  };
+
+  const cancelEdit = () => setEditDivId(null);
+
   // Sync ticker with holdings if holdings load later
   React.useEffect(() => {
     if (holdings.length > 0 && !holdings.some(h => h.ticker === ticker)) {
@@ -65,12 +107,18 @@ export default function DividendTracker({
     }
   }, [holdings, ticker]);
 
+  const calcSharesAtDate = (t: string, dateStr: string) => {
+    const cutoff = dateStr || '9999-12-31';
+    return holdings
+      .filter(h => h.ticker === t && h.buyDate <= cutoff)
+      .reduce((sum, h) => sum + h.shares, 0);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!amountPerShare || amountPerShare <= 0) return alert('Ingresa un monto por acción válido');
 
-    const holding = holdings.find(h => h.ticker === ticker);
-    const sharesCount = holding ? holding.shares : 1000; // Fallback default if not owned
+    const sharesCount = calcSharesAtDate(ticker, cutoffDate) || 1000;
 
     onAddDividend({
       ticker: ticker,
@@ -78,7 +126,9 @@ export default function DividendTracker({
       amountPerShare: Number(amountPerShare),
       totalAmount: sharesCount * Number(amountPerShare),
       payoutDate: payoutDate,
-      received: received
+      cutoffDate: cutoffDate,
+      received: received,
+      estimated: false
     });
 
     setAmountPerShare('');
@@ -149,6 +199,35 @@ export default function DividendTracker({
   // Sort list chronological (incoming or past)
   const sortedDividends = [...dividends].sort((a, b) => new Date(b.payoutDate).getTime() - new Date(a.payoutDate).getTime());
 
+  // Group dividends by ticker for cascade view
+  const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
+  const toggleTickerExpand = (t: string) => {
+    setExpandedTickers(prev => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t); else next.add(t);
+      return next;
+    });
+  };
+  const groupedDividends = React.useMemo(() => {
+    const map = new Map<string, DividendPayment[]>();
+    for (const d of sortedDividends) {
+      const arr = map.get(d.ticker) || [];
+      arr.push(d);
+      map.set(d.ticker, arr);
+    }
+    return Array.from(map.entries());
+  }, [sortedDividends]);
+
+  const {
+    sortedData: sortedDivGroups,
+    sortKey: divSortKey,
+    toggleSort: divToggleSort,
+    getSortIcon: divIcon,
+  } = useSortable(
+    groupedDividends.map(([ticker, divs]) => ({ ticker, divs, firstDiv: divs[0] })),
+    '',
+  );
+
   return (
     <div className="space-y-6">
       {/* Metrics Row */}
@@ -175,6 +254,16 @@ export default function DividendTracker({
           </div>
         </div>
       </div>
+
+      {/* Estimated dividends warning */}
+      {dividends.some(d => d.estimated) && (
+        <div className="flex items-start space-x-2 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs text-purple-800">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-purple-500" />
+          <div>
+            <span className="font-bold">Dividendos estimados:</span> Los montos y fechas marcados como <strong>Estimado</strong> son aproximados basados en el historial de pagos y no en anuncios oficiales de la Bolsa de Santiago. Verifica con tu corredora o la fuente oficial.
+          </div>
+        </div>
+      )}
 
       {/* Sub-tab Navigation */}
       <div className="flex border-b border-slate-200 space-x-1">
@@ -268,8 +357,8 @@ export default function DividendTracker({
                   <label className="block text-xs font-medium text-slate-600 mb-1">Monto por Acción (CLP)</label>
                   <input
                     type="number"
-                    step="0.01"
-                    min="0.01"
+                    step="any"
+                    min="0.00000001"
                     required
                     value={amountPerShare}
                     onChange={(e) => setAmountPerShare(e.target.value === '' ? '' : Number(e.target.value))}
@@ -286,6 +375,22 @@ export default function DividendTracker({
                     required
                     value={payoutDate}
                     onChange={(e) => setPayoutDate(e.target.value)}
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
+                  />
+                </div>
+
+                {/* Cutoff Date */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1 group relative cursor-help">
+                    Fecha Límite de Compra
+                    <span className="invisible group-hover:visible absolute bottom-full left-0 mb-2 p-2 bg-slate-900 text-white text-[10px] rounded-lg w-56 font-normal leading-normal shadow-lg z-20 whitespace-normal">
+                      Último día para comprar acciones y recibir este dividendo. Después de esta fecha, ya no calificas.
+                    </span>
+                  </label>
+                  <input
+                    type="date"
+                    value={cutoffDate}
+                    onChange={(e) => setCutoffDate(e.target.value)}
                     className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
                   />
                 </div>
@@ -332,7 +437,7 @@ export default function DividendTracker({
           )}
 
           {/* Dividends Table */}
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto table-scroll-container">
             {sortedDividends.length === 0 ? (
               <div className="p-12 text-center text-slate-400">
                 <Calendar className="w-12 h-12 text-slate-300 mx-auto mb-3" />
@@ -343,68 +448,205 @@ export default function DividendTracker({
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/70 font-semibold text-slate-500 uppercase tracking-wider">
-                    <th className="py-3 px-4">Nemotécnico</th>
-                    <th className="py-3 px-4 text-right">Cant. Acciones</th>
-                    <th className="py-3 px-4 text-right">Reparto (por Acción)</th>
-                    <th className="py-3 px-4 text-right">Monto Total</th>
-                    <th className="py-3 px-4 ">Día de Entrega</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.ticker')}>Nemotécnico{divIcon('firstDiv.ticker')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.sharesCount')}>Cant. Acciones{divIcon('firstDiv.sharesCount')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.amountPerShare')}>Reparto (por Acción){divIcon('firstDiv.amountPerShare')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.totalAmount')}>Monto Total{divIcon('firstDiv.totalAmount')}</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.payDate')}>Día de Entrega{divIcon('firstDiv.payDate')}</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.limitDate')}>Fecha Límite Compra{divIcon('firstDiv.limitDate')}</th>
                     <th className="py-3 px-4 text-center">Estado</th>
-                    <th className="py-3 px-4 text-center">Planificar</th>
+                    <th className="py-3 px-4 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {sortedDividends.map((div) => {
+                  {sortedDivGroups.map(({ ticker, divs }) => {
+                    const isExpanded = expandedTickers.has(ticker);
+                    const latestDiv = divs[0];
+
+                    const renderRow = (div: DividendPayment, isLast: boolean) => {
+                      const isEditing = editDivId === div.id;
+                      return (
+                        <tr key={div.id} className={`hover:bg-slate-50/50 transition ${!isLast ? 'bg-slate-50/30' : ''}`}>
+                          <td className="py-4 px-4 font-mono">
+                            <span className="font-bold text-slate-900">{div.ticker}</span>
+                            {div.id.startsWith('div-sys-') && div.estimated ? (
+                              <span className="ml-2 inline-flex items-center gap-0.5 bg-purple-50 text-purple-800 text-[10px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border border-purple-200 uppercase tracking-widest">
+                                Estimado
+                              </span>
+                            ) : div.id.startsWith('div-sys-') ? (
+                              <span className="ml-2 inline-flex items-center gap-0.5 bg-teal-50 text-teal-800 text-[10px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border border-teal-100 uppercase tracking-widest">
+                                Sincronizado
+                              </span>
+                            ) : (
+                              <span className="ml-2 inline-flex items-center gap-0.5 bg-blue-50 text-blue-800 text-[10px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border border-blue-200 uppercase tracking-widest">
+                                Real
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 text-right font-semibold text-slate-700 font-mono">
+                            {div.sharesCount.toLocaleString('es-CL')} acq.
+                          </td>
+
+                          <td className="py-4 px-4 text-right font-mono">
+                            {isEditing ? (
+                              <input
+                                type="number"
+                              step="any"
+                              min="0.00000001"
+                                value={editAmountPerShare}
+                                onChange={(e) => setEditAmountPerShare(e.target.value === '' ? '' : Number(e.target.value))}
+                                className="w-20 text-right text-xs border border-slate-200 rounded p-1"
+                                autoFocus
+                              />
+                            ) : (
+                              <span className="text-slate-600">$ {div.amountPerShare.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 8 })}</span>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 text-right font-bold text-slate-900 font-mono">
+                            {formatCLP(isEditing ? ((Number(editAmountPerShare) || 0) * div.sharesCount) : div.totalAmount)}
+                          </td>
+
+                          <td className="py-4 px-4 font-medium text-slate-600">
+                            {isEditing ? (
+                              <input
+                                type="date"
+                                value={editPayoutDate}
+                                onChange={(e) => setEditPayoutDate(e.target.value)}
+                                className="w-28 text-xs border border-slate-200 rounded p-1"
+                              />
+                            ) : (
+                              formatDateChilean(div.payoutDate)
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4">
+                            {isEditing ? (
+                              <input
+                                type="date"
+                                value={editCutoffDate}
+                                onChange={(e) => setEditCutoffDate(e.target.value)}
+                                className="w-28 text-xs border border-slate-200 rounded p-1"
+                              />
+                            ) : div.cutoffDate ? (
+                              <div className="flex items-center space-x-1">
+                                <span className="font-medium text-amber-700">{formatDateChilean(div.cutoffDate)}</span>
+                                {div.cutoffDate < new Date().toISOString().split('T')[0] && !div.received && (
+                                  <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded-full font-bold">Vencido</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-slate-300 text-[10px]">—</span>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 text-center">
+                            {isEditing ? (
+                              <div className="flex items-center justify-center space-x-1">
+                                <input
+                                  type="checkbox"
+                                  checked={editReceived}
+                                  onChange={(e) => setEditReceived(e.target.checked)}
+                                  className="w-4 h-4 text-teal-600 focus:ring-teal-500 rounded border-slate-300"
+                                />
+                                <span className="text-[10px] text-slate-500">{editReceived ? 'Cobrado' : 'Por cobrar'}</span>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => !div.estimated && onToggleReceived(div.id)}
+                                className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition ${
+                                  div.estimated
+                                    ? 'bg-purple-50 text-purple-800 border border-purple-200 cursor-default'
+                                    : div.received
+                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100 cursor-pointer'
+                                    : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 cursor-pointer'
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${div.estimated ? 'bg-purple-500' : div.received ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                                <span>{div.estimated ? 'Estimado' : div.received ? 'Cobrado' : 'Por cobrar'}</span>
+                              </button>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 text-center">
+                            <div className="flex items-center justify-center space-x-1">
+                              {isEditing ? (
+                                <>
+                                  <button
+                                    onClick={saveEdit}
+                                    className="p-1 rounded text-emerald-600 hover:bg-emerald-50 transition"
+                                    title="Guardar cambios"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={cancelEdit}
+                                    className="p-1 rounded text-slate-400 hover:bg-slate-100 transition"
+                                    title="Cancelar"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => startEdit(div)}
+                                    className="p-1 px-1.5 text-slate-400 hover:text-teal-500 hover:bg-slate-50 rounded transition"
+                                    title="Editar dividendo"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => onDeleteDividend(div.id)}
+                                    className="p-1 px-1.5 text-rose-500 hover:bg-rose-50 rounded transition"
+                                    title="Eliminar dividendo"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    };
+
                     return (
-                      <tr key={div.id} className="hover:bg-slate-50/50 transition">
-                        <td className="py-4 px-4 font-mono">
-                          <span className="font-bold text-slate-900">{div.ticker}</span>
-                          {div.id.startsWith('div-sys-') && (
-                            <span className="ml-2 inline-flex items-center gap-0.5 bg-teal-50 text-teal-800 text-[10px] sm:text-[9px] font-bold px-1.5 py-0.5 rounded border border-teal-100 uppercase tracking-widest">
-                              Real (Bolsa)
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-4 px-4 text-right font-semibold text-slate-700 font-mono">
-                          {div.sharesCount.toLocaleString('es-CL')} acq.
-                        </td>
-
-                        <td className="py-4 px-4 text-right text-slate-600 font-mono">
-                          {formatCLP(div.amountPerShare, true)}
-                        </td>
-
-                        <td className="py-4 px-4 text-right font-bold text-slate-900 font-mono">
-                          {formatCLP(div.totalAmount)}
-                        </td>
-
-                        <td className="py-4 px-4 font-medium text-slate-600">
-                          {formatDateChilean(div.payoutDate)}
-                        </td>
-
-                        <td className="py-4 px-4 text-center">
-                          <button
-                            onClick={() => onToggleReceived(div.id)}
-                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider cursor-pointer transition ${
-                              div.received
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
-                                : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
-                            }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full ${div.received ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                            <span>{div.received ? 'Cobrado' : 'Por cobrar'}</span>
-                          </button>
-                        </td>
-
-                        <td className="py-4 px-4 text-center">
-                          <button
-                            onClick={() => onDeleteDividend(div.id)}
-                            className="p-1 px-2 text-rose-500 hover:bg-rose-50 rounded transition"
-                            title="Eliminar dividendo"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
+                      <React.Fragment key={ticker}>
+                        {/* Latest dividend row (always visible) */}
+                        {renderRow(latestDiv, divs.length === 1 || isExpanded)}
+                        {/* Expand button if there are more dividends */}
+                        {divs.length > 1 && !isExpanded && (
+                          <tr>
+                            <td colSpan={8} className="text-center py-2">
+                              <button
+                                onClick={() => toggleTickerExpand(ticker)}
+                                className="inline-flex items-center space-x-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                              >
+                                <Layers className="w-3.5 h-3.5" />
+                                <span>+{divs.length - 1} {divs.length - 1 === 1 ? 'dividendo anterior' : 'dividendos anteriores'} de {ticker}</span>
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                        {/* Expanded rows */}
+                        {isExpanded && divs.slice(1).map((d, i) => renderRow(d, i === divs.slice(1).length - 1))}
+                        {/* Collapse button */}
+                        {isExpanded && divs.length > 1 && (
+                          <tr>
+                            <td colSpan={8} className="text-center py-2 bg-slate-50/50">
+                              <button
+                                onClick={() => toggleTickerExpand(ticker)}
+                                className="inline-flex items-center space-x-1 text-xs text-slate-500 hover:text-slate-700 font-semibold cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Ocultar dividendos anteriores</span>
+                              </button>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -527,17 +769,19 @@ export default function DividendTracker({
                     
                     <div className="mt-1 space-y-1 text-[8px] sm:text-[9px] text-left">
                       {dayDividends.map((div, dIdx) => (
-                        <div 
-                          key={div.id || dIdx} 
-                          className={`px-1 py-0.5 rounded font-mono font-bold truncate leading-tight ${
-                            div.received 
-                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' 
-                              : 'bg-amber-50 text-amber-800 border border-amber-100'
-                          }`} 
-                          title={`${div.ticker}: ${formatCLP(div.totalAmount)}`}
-                        >
-                          <span className="font-extrabold">{div.ticker}</span>: {formatCLP(div.totalAmount)}
-                        </div>
+                          <div
+                              key={div.id || dIdx} 
+                              className={`px-1 py-0.5 rounded font-mono font-bold truncate leading-tight ${
+                                div.estimated
+                                  ? 'bg-purple-50 text-purple-800 border border-purple-100'
+                                  : div.received 
+                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-100' 
+                                  : 'bg-amber-50 text-amber-800 border border-amber-100'
+                              }`} 
+                              title={`${div.ticker}: ${formatCLP(div.totalAmount)}${div.estimated ? ' (estimado)' : ''}`}
+                            >
+                              <span className="font-extrabold">{div.ticker}</span>: {formatCLP(div.totalAmount)}
+                            </div>
                       ))}
                     </div>
                   </div>
@@ -568,29 +812,36 @@ export default function DividendTracker({
                       <div className="font-mono bg-slate-100 px-2 py-1 rounded font-bold text-slate-700">
                         {div.ticker}
                       </div>
-                      <div>
-                        <div className="font-semibold text-slate-800">
-                          Total Pagado: {formatCLP(div.totalAmount)}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          {div.sharesCount.toLocaleString('es-CL')} acciones x {formatCLP(div.amountPerShare, true)} por acción
+                        <div>
+                          <div className="font-semibold text-slate-800">
+                            Total Pagado: {formatCLP(div.totalAmount)}
+                          </div>
+                          <div className="text-[10px] text-slate-400">
+                            {div.sharesCount.toLocaleString('es-CL')} acciones x $ {div.amountPerShare.toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} por acción
+                          </div>
+                          {div.cutoffDate && (
+                            <div className="text-[10px] text-amber-600 mt-0.5">
+                              Límite compra: {formatDateChilean(div.cutoffDate)}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </div>
 
                     <div className="flex items-center space-x-4">
                       <span className="font-mono font-bold text-slate-600 bg-slate-50 border border-slate-200/50 px-2.5 py-1 rounded">
                         {formatDateChilean(div.payoutDate)}
                       </span>
                       <button
-                        onClick={() => onToggleReceived(div.id)}
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider cursor-pointer ${
-                          div.received
-                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-100'
-                            : 'bg-amber-50 text-amber-800 border border-amber-200'
+                        onClick={() => !div.estimated && onToggleReceived(div.id)}
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          div.estimated
+                            ? 'bg-purple-50 text-purple-800 border border-purple-200 cursor-default'
+                            : div.received
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-100 cursor-pointer'
+                            : 'bg-amber-50 text-amber-800 border border-amber-200 cursor-pointer'
                         }`}
                       >
-                        {div.received ? 'Cobrado' : 'Por cobrar'}
+                        {div.estimated ? 'Estimado' : div.received ? 'Cobrado' : 'Por cobrar'}
                       </button>
                       <button
                         onClick={() => onDeleteDividend(div.id)}

@@ -40,3 +40,11 @@ export function formatDateChilean(dateString: string): string {
   }
   return dateString;
 }
+
+/**
+ * Normalizes a ticker by removing accents/diacritics and trimming
+ * Prevents duplicates like HABITAT vs HÁBITAT
+ */
+export function normalizeTicker(ticker: string): string {
+  return ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}

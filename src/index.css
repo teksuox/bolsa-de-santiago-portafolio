@@ -16,4 +16,42 @@
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
   }
+
+  .table-scroll-container {
+    max-height: 480px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #14b8a6 #e2e8f0;
+  }
+
+  .table-scroll-container::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-track {
+    background: #e2e8f0;
+    border-radius: 4px;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-thumb {
+    background: #14b8a6;
+    border-radius: 4px;
+  }
+
+  .table-scroll-container::-webkit-scrollbar-thumb:hover {
+    background: #0d9488;
+  }
+
+  .table-scroll-container thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .table-scroll-container thead th {
+    background-color: #f8fafc;
+  }
 }

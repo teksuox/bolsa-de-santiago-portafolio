@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bell, X } from 'lucide-react';
 import Header from './components/Header';
@@ -21,8 +21,24 @@ import {
   INITIAL_MARKET_STOCKS
 } from './data';
 import { portafolioDB } from './db';
+import { normalizeTicker } from './utils';
+import { autoConfigurePBUrl } from './lib/pocketbase';
+
+function dedupeCustomStocks(stocks: MarketStock[]): MarketStock[] {
+  const seen = new Set<string>();
+  return stocks
+    .filter(cs => cs && cs.ticker)
+    .map(cs => ({ ...cs, ticker: normalizeTicker(cs.ticker) }))
+    .filter(cs => {
+      if (seen.has(cs.ticker)) return false;
+      seen.add(cs.ticker);
+      return true;
+    });
+}
 
 export default function App() {
+  // Auto-configure PocketBase URL from server config
+  useEffect(() => { autoConfigurePBUrl(); }, []);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -38,8 +54,7 @@ export default function App() {
       const saved = localStorage.getItem('custom_searched_stocks');
       const parsed = saved ? JSON.parse(saved) : [];
       if (Array.isArray(parsed) && parsed.length > 0) {
-        // Filter out any duplicates
-        const customOnly = parsed.filter((cs: MarketStock) => cs && cs.ticker && !INITIAL_MARKET_STOCKS.some(s => s.ticker === cs.ticker));
+        const customOnly = dedupeCustomStocks(parsed).filter(cs => !INITIAL_MARKET_STOCKS.some(s => s.ticker === cs.ticker));
         return [...INITIAL_MARKET_STOCKS, ...customOnly];
       }
     } catch (e) {
@@ -195,6 +210,12 @@ export default function App() {
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
 
+  // Ref for background refresh to always use latest holdings (avoids stale closure)
+  const holdingsRef = useRef(holdings);
+  holdingsRef.current = holdings;
+
+  const refreshFnRef = useRef<((silent: boolean) => Promise<void>) | null>(null);
+
   // Synchronize stock rates and indicator data in the background from Yahoo Finance
   const handleRefreshMarketData = async (silent: boolean = false) => {
     if (!silent) setIsRefreshing(true);
@@ -216,7 +237,8 @@ export default function App() {
       }
 
       // Load owned ones
-      holdings.forEach(h => {
+      const currentHoldings = holdingsRef.current;
+      currentHoldings.forEach(h => {
         if (h && h.ticker) additionalTickersSet.add(h.ticker.toUpperCase());
       });
 
@@ -232,10 +254,11 @@ export default function App() {
       if (marketResponse.ok) {
         const quotes = await marketResponse.json();
         if (quotes && quotes.length > 0) {
+          const normalizedQuotes = quotes.map((q: any) => ({ ...q, ticker: normalizeTicker(q.ticker) }));
           // 1. Update Market reference list
           setMarketStocks(prev => {
-            const customStocks = prev.filter(p => !quotes.some((q: any) => q.ticker === p.ticker));
-            const updatedList = [...quotes, ...customStocks];
+            const customStocks = prev.filter(p => !normalizedQuotes.some((q: any) => q.ticker === normalizeTicker(p.ticker)));
+            const updatedList = [...normalizedQuotes, ...customStocks];
             
             // Sync updated custom stock details back to localStorage to preserve latest price/yield
             const finalCustomSavedList = updatedList.filter(s => !standardTickers.includes(s.ticker));
@@ -257,7 +280,7 @@ export default function App() {
           // 2. Refresh active holdings pricing
           setHoldings(prev => {
             return prev.map(h => {
-              const quote = quotes.find((q: any) => q.ticker === h.ticker);
+              const quote = normalizedQuotes.find((q: any) => q.ticker === normalizeTicker(h.ticker));
               if (!quote) return h;
               const updated = {
                 ...h,
@@ -277,11 +300,14 @@ export default function App() {
     }
   };
 
+  // Keep ref updated with latest refresh function
+  refreshFnRef.current = handleRefreshMarketData;
+
   // Setup periodic polling interval (automatic sync every 45 seconds)
   useEffect(() => {
     const interval = setInterval(() => {
-      handleRefreshMarketData(true); // Silent background refresh
-    }, 45000);
+      refreshFnRef.current?.(true); // Silent background refresh
+    }, 300000);
     return () => clearInterval(interval);
   }, []);
 
@@ -296,12 +322,13 @@ export default function App() {
   });
 
   const handleDeleteMarketStock = (ticker: string) => {
-    const isOwned = holdings.some(h => h.ticker === ticker);
+    const normalized = normalizeTicker(ticker);
+    const isOwned = holdings.some(h => h.ticker === normalized);
     if (isOwned) {
       return;
     }
     setDeletedStocks(prev => {
-      const updated = prev.includes(ticker) ? prev : [...prev, ticker];
+      const updated = prev.includes(normalized) ? prev : [...prev, normalized];
       localStorage.setItem('deleted_market_tickers', JSON.stringify(updated));
       portafolioDB.saveDeletedTickers(updated).catch(err => console.error('Error saving deleted stocks to IndexedDB:', err));
       return updated;
@@ -339,10 +366,10 @@ export default function App() {
           // Merge with current state dividends to preserve any existing user entries
           setDividends(prev => {
             const manuals = prev.filter(d => !d.id.startsWith('div-sys-'));
-            const sysKeys = new Set(synced.map(s => `${s.ticker}-${s.payoutDate}`));
+            const sysKeys = new Set(synced.map(s => `${s.ticker}-${s.payoutDate}-${s.cutoffDate || ''}`));
             
             // Remove manual records of the same ticker/date to avoid duplication
-            const filteredManuals = manuals.filter(m => !sysKeys.has(`${m.ticker}-${m.payoutDate}`));
+            const filteredManuals = manuals.filter(m => !sysKeys.has(`${m.ticker}-${m.payoutDate}-${m.cutoffDate || ''}`));
             const merged = [...synced, ...filteredManuals];
             
             // Save to IndexedDB
@@ -351,7 +378,12 @@ export default function App() {
             });
             return merged;
           });
+        } else {
+          console.warn('No se encontraron dividendos nuevos para tus acciones.');
         }
+      } else {
+        const errData = await response.text().catch(() => '');
+        console.error(`Sync dividends error (${response.status}): ${errData}`);
       }
     } catch (err) {
       console.error('Error sincronizando dividendos desde bolsa:', err);
@@ -377,9 +409,17 @@ export default function App() {
         setAnnualPerformancePercent(storedYield);
 
         if (storedDeletedTickers) {
-          setDeletedStocks(storedDeletedTickers);
+          const seen = new Set<string>();
+          const deduped = storedDeletedTickers.filter((t: string) => {
+            const n = normalizeTicker(t);
+            if (seen.has(n)) return false;
+            seen.add(n);
+            return true;
+          });
+          setDeletedStocks(deduped);
           try {
-            localStorage.setItem('deleted_market_tickers', JSON.stringify(storedDeletedTickers));
+            localStorage.setItem('deleted_market_tickers', JSON.stringify(deduped));
+            portafolioDB.saveDeletedTickers(deduped).catch(() => {});
           } catch (e) {
             console.warn('Error saving deleted stocks to localstorage on mount:', e);
           }
@@ -387,12 +427,20 @@ export default function App() {
 
         if (storedCustomStocks) {
           const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
-          const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+          const customOnly = dedupeCustomStocks(storedCustomStocks).filter(cs => !standardTickers.includes(cs.ticker));
           setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
           try {
             localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
           } catch (e) {
             console.warn('Error saving custom stocks to localstorage on mount:', e);
+          }
+          // Clean up duplicate entries in IndexedDB (e.g. "QUIÑENCO" → "QUINENCO")
+          const keptTickers = new Set(customOnly.map(s => s.ticker));
+          for (const old of storedCustomStocks) {
+            const normalized = normalizeTicker(old.ticker);
+            if (keptTickers.has(normalized) && normalized !== old.ticker) {
+              portafolioDB.deleteCustomStock(old.ticker).catch(() => {});
+            }
           }
         }
 
@@ -402,7 +450,7 @@ export default function App() {
           
           if (storedCustomStocks && storedCustomStocks.length > 0) {
             storedCustomStocks.forEach(s => {
-              if (s && s.ticker) additionalTickersSet.add(s.ticker.toUpperCase());
+              if (s && s.ticker) additionalTickersSet.add(normalizeTicker(s.ticker));
             });
           }
           
@@ -412,7 +460,7 @@ export default function App() {
             const parsed = saved ? JSON.parse(saved) : [];
             if (Array.isArray(parsed)) {
               parsed.forEach((s: any) => {
-                if (s && s.ticker) additionalTickersSet.add(s.ticker.toUpperCase());
+                if (s && s.ticker) additionalTickersSet.add(normalizeTicker(s.ticker));
               });
             }
           } catch (e) {
@@ -421,7 +469,7 @@ export default function App() {
 
           // Load owned ones from db
           storedHoldings.forEach(h => {
-            if (h && h.ticker) additionalTickersSet.add(h.ticker.toUpperCase());
+            if (h && h.ticker) additionalTickersSet.add(normalizeTicker(h.ticker));
           });
 
           const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
@@ -436,10 +484,11 @@ export default function App() {
           if (marketResponse.ok) {
             const quotes = await marketResponse.json();
             if (quotes && quotes.length > 0) {
+              const normalizedQuotes = quotes.map((q: any) => ({ ...q, ticker: normalizeTicker(q.ticker) }));
               // 1. Update Market reference list
               setMarketStocks(prev => {
-                const customStocks = prev.filter(p => !quotes.some((q: any) => q.ticker === p.ticker));
-                const updatedList = [...quotes, ...customStocks];
+                const customStocks = prev.filter(p => !normalizedQuotes.some((q: any) => q.ticker === p.ticker));
+                const updatedList = [...normalizedQuotes, ...customStocks];
                 
                 // Sync updated custom stock details back to localStorage & IndexedDB
                 const finalCustomSavedList = updatedList.filter(s => !standardTickers.includes(s.ticker));
@@ -450,9 +499,14 @@ export default function App() {
                     console.warn('Error saving updated custom_searched_stocks:', e);
                   }
                   
-                  // Save custom stocks in IndexedDB as well
+                  // Save custom stocks in IndexedDB as well (normalized, no duplicates)
+                  const seen = new Set<string>();
                   for (const s of finalCustomSavedList) {
-                    portafolioDB.saveCustomStock(s).catch(err => console.error('Error auto-syncing custom stock to DB on mount:', err));
+                    const normalized = { ...s, ticker: normalizeTicker(s.ticker) };
+                    if (!seen.has(normalized.ticker)) {
+                      seen.add(normalized.ticker);
+                      portafolioDB.saveCustomStock(normalized).catch(err => console.error('Error auto-syncing custom stock to DB on mount:', err));
+                    }
                   }
                 }
                 return updatedList;
@@ -461,7 +515,7 @@ export default function App() {
               // 2. Refresh active holdings pricing
               setHoldings(prev => {
                 return prev.map(h => {
-                  const quote = quotes.find((q: any) => q.ticker === h.ticker);
+                  const quote = normalizedQuotes.find((q: any) => q.ticker === normalizeTicker(h.ticker));
                   if (!quote) return h;
                   const updated = {
                     ...h,
@@ -546,7 +600,7 @@ export default function App() {
 
               if (incomingData.customStocks) {
                 const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
-                const customOnly = incomingData.customStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+                const customOnly = dedupeCustomStocks(incomingData.customStocks).filter(cs => !standardTickers.includes(cs.ticker));
                 setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
                 localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
               }
@@ -608,14 +662,15 @@ export default function App() {
 
   // Handlers for Portfolio
   const handleAddHolding = async (newHolding: Omit<StockHolding, 'id'>) => {
+    const normalizedTicker = normalizeTicker(newHolding.ticker);
     const id = `h-${Date.now()}`;
-    const holding: StockHolding = { ...newHolding, id };
+    const holding: StockHolding = { ...newHolding, id, ticker: normalizedTicker };
     
     // Register the ticker as a custom searched stock if it doesn't already exist in our marketStocks reference list
-    if (newHolding.ticker && !marketStocks.some(s => s.ticker === newHolding.ticker)) {
+    if (normalizedTicker && !marketStocks.some(s => normalizeTicker(s.ticker) === normalizedTicker)) {
       const parsedStock: MarketStock = {
-        ticker: newHolding.ticker,
-        name: newHolding.name || `${newHolding.ticker} S.A.`,
+        ticker: normalizedTicker,
+        name: newHolding.name || `${normalizedTicker} S.A.`,
         price: newHolding.buyPrice,
         changePercent: 0,
         dividendYield: newHolding.annualTargetYield || 6.0,
@@ -626,7 +681,7 @@ export default function App() {
       try {
         const saved = localStorage.getItem('custom_searched_stocks');
         const parsed = saved ? JSON.parse(saved) : [];
-        if (!parsed.some((s: MarketStock) => s.ticker === parsedStock.ticker)) {
+        if (!parsed.some((s: MarketStock) => normalizeTicker(s.ticker) === normalizedTicker)) {
           parsed.push(parsedStock);
           localStorage.setItem('custom_searched_stocks', JSON.stringify(parsed));
         }
@@ -638,7 +693,7 @@ export default function App() {
       portafolioDB.saveCustomStock(parsedStock).catch(err => console.error('Error auto-persisting custom stock to IndexedDB:', err));
 
       setMarketStocks(prev => {
-        if (prev.some(s => s.ticker === parsedStock.ticker)) return prev;
+        if (prev.some(s => normalizeTicker(s.ticker) === normalizedTicker)) return prev;
         return [...prev, parsedStock];
       });
     }
@@ -706,6 +761,21 @@ export default function App() {
     await portafolioDB.saveDividend(div);
   };
 
+  const handleUpdateDividend = async (id: string, updates: Partial<DividendPayment>) => {
+    let updated: DividendPayment | null = null;
+    setDividends(prev => prev.map(d => {
+      if (d.id === id) {
+        const amtPerShare = updates.amountPerShare ?? d.amountPerShare;
+        updated = { ...d, ...updates, totalAmount: d.sharesCount * amtPerShare };
+        return updated;
+      }
+      return d;
+    }));
+    if (updated) {
+      await portafolioDB.saveDividend(updated);
+    }
+  };
+
   const handleToggleReceived = async (id: string) => {
     let targetDiv: DividendPayment | null = null;
     
@@ -748,13 +818,14 @@ export default function App() {
 
   // Quick action buy from Market table to simulation portfolio
   const handleMarketQuickBuy = async (tickerCode: string) => {
-    const stockInfo = marketStocks.find(s => s.ticker === tickerCode);
+    const normalizedCode = normalizeTicker(tickerCode);
+    const stockInfo = marketStocks.find(s => s.ticker === normalizedCode);
     if (!stockInfo) return;
 
     let updatedHoldings: StockHolding[] = [];
 
     // Check if user already holds it
-    const existing = holdings.find(h => h.ticker === tickerCode);
+    const existing = holdings.find(h => normalizeTicker(h.ticker) === normalizedCode);
     if (existing) {
       const updatedHolding = {
         ...existing,
@@ -762,7 +833,7 @@ export default function App() {
         buyPrice: Math.round((existing.buyPrice + stockInfo.price) / 2),
         currentPrice: stockInfo.price
       };
-      updatedHoldings = holdings.map(h => h.ticker === tickerCode ? updatedHolding : h);
+      updatedHoldings = holdings.map(h => normalizeTicker(h.ticker) === normalizedCode ? updatedHolding : h);
       setHoldings(updatedHoldings);
       await portafolioDB.saveHolding(updatedHolding);
     } else {
@@ -825,7 +896,7 @@ export default function App() {
       setDeletedStocks(storedDeletedTickers);
       
       const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
-      const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+      const customOnly = dedupeCustomStocks(storedCustomStocks).filter(cs => !standardTickers.includes(cs.ticker));
       setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
       
       try {
@@ -861,17 +932,50 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const speed = 0.7;
+    const handler = (e: WheelEvent) => {
+      const target = (e.currentTarget as HTMLElement);
+      e.preventDefault();
+      target.scrollBy({ top: e.deltaY * speed, behavior: 'smooth' });
+    };
+    const observer = new MutationObserver(() => {
+      document.querySelectorAll<HTMLElement>('.table-scroll-container').forEach(el => {
+        if (!el.dataset.smoothScroll) {
+          el.dataset.smoothScroll = 'true';
+          el.addEventListener('wheel', handler, { passive: false });
+        }
+      });
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   // Calculations
   const portfolioValuation = holdings.reduce((sum, h) => sum + (h.shares * h.currentPrice), 0);
   const totalContributed = holdings.reduce((sum, h) => sum + (h.shares * h.buyPrice), 0);
   const totalDividends = dividends.filter(d => d.received).reduce((sum, d) => sum + d.totalAmount, 0);
   const totalTaxRefunds = refunds.reduce((sum, r) => sum + r.amount, 0);
+  const dailyPnL = holdings.reduce((sum, h) => {
+    const stock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(h.ticker));
+    if (stock && stock.changePercent != null && stock.price > 0) {
+      const pct = stock.changePercent / 100;
+      const changePerShare = stock.price * pct / (1 + pct);
+      return sum + (h.shares * changePerShare);
+    }
+    return sum;
+  }, 0);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans selection:bg-teal-500 selection:text-slate-900">
       <Header
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         portfolioValue={portfolioValuation}
         onRefreshMarketData={() => handleRefreshMarketData(false)}
         isRefreshing={isRefreshing}
@@ -935,9 +1039,7 @@ export default function App() {
                   annualPerformancePercentage={annualPerformancePercent}
                   setAnnualPerformancePercentage={handleSetAnnualPerformancePercent}
                   holdingsCount={holdings.length}
-                  onExportBackup={handleExportBackup}
-                  onImportBackup={handleImportBackup}
-                  onClearAllData={handleClearAllData}
+                  dailyPnL={dailyPnL}
                 />
               )}
 
@@ -949,6 +1051,7 @@ export default function App() {
                   onUpdateHoldingYield={handleUpdateHoldingYield}
                   onDeleteHolding={handleDeleteHolding}
                   marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker))}
+                  dailyPnL={dailyPnL}
                 />
               )}
 
@@ -956,6 +1059,7 @@ export default function App() {
                 <DividendTracker
                   dividends={dividends}
                   onAddDividend={handleAddDividend}
+                  onUpdateDividend={handleUpdateDividend}
                   onToggleReceived={handleToggleReceived}
                   onDeleteDividend={handleDeleteDividend}
                   holdings={holdings}
@@ -978,9 +1082,12 @@ export default function App() {
                   onQuickBuy={handleMarketQuickBuy}
                   holdings={holdings}
                   onSearchAndAddStock={(newStock) => {
-                    if (deletedStocks.includes(newStock.ticker)) {
+                    const normalizedTicker = normalizeTicker(newStock.ticker);
+                    const normalizedStock = { ...newStock, ticker: normalizedTicker };
+
+                    if (deletedStocks.includes(normalizedTicker)) {
                       setDeletedStocks(prev => {
-                        const updated = prev.filter(t => t !== newStock.ticker);
+                        const updated = prev.filter(t => t !== normalizedTicker);
                         localStorage.setItem('deleted_market_tickers', JSON.stringify(updated));
                         portafolioDB.saveDeletedTickers(updated).catch(err => console.error('Error saving updated deleted list:', err));
                         return updated;
@@ -991,8 +1098,8 @@ export default function App() {
                     try {
                       const saved = localStorage.getItem('custom_searched_stocks');
                       const parsed = saved ? JSON.parse(saved) : [];
-                      if (!parsed.some((s: MarketStock) => s.ticker === newStock.ticker)) {
-                        parsed.push(newStock);
+                      if (!parsed.some((s: MarketStock) => s.ticker === normalizedTicker)) {
+                        parsed.push(normalizedStock);
                         localStorage.setItem('custom_searched_stocks', JSON.stringify(parsed));
                       }
                     } catch (e) {
@@ -1000,11 +1107,11 @@ export default function App() {
                     }
 
                     // Save custom searched stock to IndexedDB as well for cloud backup
-                    portafolioDB.saveCustomStock(newStock).catch(err => console.error('Error saving custom stock to IndexedDB:', err));
+                    portafolioDB.saveCustomStock(normalizedStock).catch(err => console.error('Error saving custom stock to IndexedDB:', err));
 
                     setMarketStocks(prev => {
-                      if (prev.some(s => s.ticker === newStock.ticker)) return prev;
-                      return [...prev, newStock];
+                      if (prev.some(s => s.ticker === normalizedTicker)) return prev;
+                      return [...prev, normalizedStock];
                     });
                   }}
                   onDeleteStock={handleDeleteMarketStock}
@@ -1037,7 +1144,7 @@ export default function App() {
                       setDeletedStocks(storedDeletedTickers);
                       
                       const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
-                      const customOnly = storedCustomStocks.filter(cs => cs && cs.ticker && !standardTickers.includes(cs.ticker));
+                      const customOnly = dedupeCustomStocks(storedCustomStocks).filter(cs => !standardTickers.includes(cs.ticker));
                       setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
                       try {
                         localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
@@ -1046,7 +1153,7 @@ export default function App() {
                         console.warn('Error saving updated custom_searched_stocks or deleted tickers on cloud restore:', e);
                       }
                       
-                      setActiveTab('dashboard');
+                      handleTabChange('dashboard');
                     } catch (err) {
                       console.error('Error al recargar datos importados:', err);
                     }
@@ -1057,6 +1164,9 @@ export default function App() {
                   annualPerformancePercent={annualPerformancePercent}
                   marketStocks={marketStocks}
                   deletedStocks={deletedStocks}
+                  onExportBackup={handleExportBackup}
+                  onImportBackup={handleImportBackup}
+                  onClearAllData={handleClearAllData}
                 />
               )}
             </motion.div>
@@ -1065,14 +1175,8 @@ export default function App() {
         )}
       </main>
 
-      {/* Modern Chilean Disclaimer Footer */}
-      <footer className="bg-slate-900 text-slate-400 py-8 px-4 border-t border-slate-800 text-center text-xs mt-12">
-        <div className="max-w-7xl mx-auto space-y-2">
-          <p>© 2026 Bolsa de Santiago Portafolio. Todos los derechos reservados.</p>
-          <p className="text-slate-500 max-w-2xl mx-auto text-[10px]">
-            Información simulada de referencia bursátil para la República de Chile en base al índice IPSA. Los datos tributarios de Operación Renta son estimaciones didácticas de ahorro personal basados en el crédito de primera categoría de la ley sobre impuesto a la renta chilena.
-          </p>
-        </div>
+      <footer className="bg-slate-900 text-slate-500 text-[10px] py-3 px-4 border-t border-slate-800 text-center w-full mt-12">
+        <p>Software libre para la <span className="text-slate-400">Comunidad Financiera de Chile</span>. Datos con fines educativos e informativos &mdash; no constituye asesoría de inversión. <span className="text-slate-400">#InversiónConsciente</span></p>
       </footer>
     </div>
   );

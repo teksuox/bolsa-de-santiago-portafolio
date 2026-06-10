@@ -1,24 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { portafolioDB, DBBackupData } from '../db';
-import { pb, updatePocketBaseUrl, checkPocketBaseHealth, uploadPortfolioToPB, downloadPortfolioFromPB } from '../lib/pocketbase';
+import { pb, checkPocketBaseHealth, uploadPortfolioToPB, downloadPortfolioFromPB } from '../lib/pocketbase';
 import { 
   Cloud, 
   Save, 
   RotateCw, 
   AlertTriangle, 
-  HelpCircle, 
   Key, 
   Lock, 
   CheckCircle, 
-  Database, 
   User, 
   Mail, 
-  Unlock, 
   Radio, 
-  Settings, 
-  Terminal, 
   ArrowRight,
-  LogOut
+  LogOut,
+  Database,
+  Download,
+  Upload,
+  Trash2,
+  Check
 } from 'lucide-react';
 
 interface PocketBaseSyncProps {
@@ -29,6 +29,9 @@ interface PocketBaseSyncProps {
   annualPerformancePercent: number;
   marketStocks: any[];
   deletedStocks: string[];
+  onExportBackup: () => void;
+  onImportBackup: (content: string) => Promise<void>;
+  onClearAllData: () => Promise<void>;
 }
 
 export default function PocketBaseSync({ 
@@ -38,11 +41,12 @@ export default function PocketBaseSync({
   refunds,
   annualPerformancePercent,
   marketStocks,
-  deletedStocks
+  deletedStocks,
+  onExportBackup,
+  onImportBackup,
+  onClearAllData
 }: PocketBaseSyncProps) {
   
-  // Url config state
-  const [pbUrl, setPbUrl] = useState(() => localStorage.getItem('pocketbase_url') || 'http://localhost:8090');
   const [isServerHealthy, setIsServerHealthy] = useState<boolean | null>(null);
   
   // Auth states
@@ -62,6 +66,12 @@ export default function PocketBaseSync({
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
+  // Backup import/clear state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [importError, setImportError] = useState('');
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   // Auto-sync configuration
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => {
     return localStorage.getItem('pb_autosync_enabled') === 'true';
@@ -69,21 +79,8 @@ export default function PocketBaseSync({
 
   // Check health on mount
   useEffect(() => {
-    verifyHealth(pbUrl);
+    checkPocketBaseHealth(pb.baseUrl).then(setIsServerHealthy);
   }, []);
-
-  const verifyHealth = async (url: string) => {
-    const healthy = await checkPocketBaseHealth(url);
-    setIsServerHealthy(healthy);
-    return healthy;
-  };
-
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.trim();
-    setPbUrl(val);
-    updatePocketBaseUrl(val);
-    verifyHealth(val);
-  };
 
   // Sign in logic
   const handleLogin = async (e: React.FormEvent) => {
@@ -151,14 +148,19 @@ export default function PocketBaseSync({
       setIsLoggedIn(true);
       setCurrentUser(authData.record);
       
-      // 3. Sync initial state to make sure database is ready
-      const text = await portafolioDB.exportBackup();
-      await uploadPortfolioToPB(text);
+      // 3. Sync initial state if portafolios collection exists (best-effort)
+      try {
+        const text = await portafolioDB.exportBackup();
+        await uploadPortfolioToPB(text);
+      } catch (syncErr) {
+        console.warn('Initial sync skipped (portafolios collection may not exist yet):', syncErr);
+      }
       
       setStatusMessage('');
     } catch (err: any) {
       console.error(err);
       setErrorMessage(err.message || 'Error al crear la cuenta. Inténtalo de nuevo.');
+      setStatusMessage('');
     } finally {
       setIsLoading(false);
     }
@@ -227,6 +229,37 @@ export default function PocketBaseSync({
     }
   };
 
+  // Backup handlers
+  const handleFileChangeForBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        JSON.parse(text);
+        await onImportBackup(text);
+        setImportStatus('success');
+        setTimeout(() => setImportStatus('idle'), 4000);
+      } catch (err: any) {
+        setImportStatus('error');
+        setImportError(err?.message || 'Archivo de respaldo dañado o incorrecto.');
+        setTimeout(() => setImportStatus('idle'), 4000);
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleClearClick = async () => {
+    if (!showClearConfirm) {
+      setShowClearConfirm(true);
+      return;
+    }
+    await onClearAllData();
+    setShowClearConfirm(false);
+  };
+
   // Listen to changes in the toggle
   const toggleAutoSync = (checked: boolean) => {
     setAutoSyncEnabled(checked);
@@ -253,43 +286,6 @@ export default function PocketBaseSync({
       </div>
 
       <div className="p-6 space-y-6">
-
-        {/* Server & Docker Connection config */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
-          <h4 className="text-xs font-bold text-slate-705 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 pb-2">
-            <Settings className="w-3.5 h-3.5 text-teal-600" />
-            Configuración de Instancia PocketBase
-          </h4>
-
-          <div className="space-y-2">
-            <label className="text-[10.5px] font-bold text-slate-500 uppercase block">URL del Servidor PocketBase (Docker / Local)</label>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                type="text"
-                placeholder="http://localhost:8090"
-                value={pbUrl}
-                onChange={handleUrlChange}
-                className="flex-1 text-xs font-mono bg-white hover:bg-slate-50 transition border border-slate-350 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-teal-500/20 text-slate-700"
-              />
-              <button
-                type="button"
-                onClick={() => verifyHealth(pbUrl)}
-                className="bg-slate-900 text-white font-bold hover:bg-slate-800 transition text-xs px-4 py-2 rounded-lg cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <RotateCw className="w-3.5 h-3.5" /> Probar Conexión
-              </button>
-            </div>
-            <p className="text-[10px] text-slate-400 leading-relaxed">
-              Introduce la URL donde corre tu docker de PocketBase. Por defecto es <code className="font-mono bg-slate-200 px-1 py-0.5 rounded text-slate-700">http://localhost:8090</code>. Actualmente: {isServerHealthy === true ? (
-                <span className="text-emerald-600 font-bold">Conexión establecida correctamente.</span>
-              ) : isServerHealthy === false ? (
-                <span className="text-rose-500 font-bold">Infranqueable o inactivo. Comprueba que PocketBase esté corriendo en tu Docker.</span>
-              ) : (
-                <span>Comprobando salud...</span>
-              )}
-            </p>
-          </div>
-        </div>
 
         {/* User Authentication Panel if not Logged In */}
         {!isLoggedIn ? (
@@ -533,59 +529,89 @@ export default function PocketBaseSync({
           </div>
         )}
 
-        {/* Accordion / Interactive instructions for PocketBase Collection creation */}
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
-          <summary className="text-xs font-extrabold text-slate-850 flex items-center gap-1.5 select-none focus:outline-none">
-            <HelpCircle className="w-4 h-4 text-teal-600 shrink-0" />
-            <span>Guía de Configuración Rápida en PocketBase</span>
-          </summary>
-          
-          <div className="text-xs text-slate-600 space-y-3 font-medium pl-1 leading-relaxed border-t border-slate-200 pt-3">
-            <p>
-              Como estás ejecutando tu flujo con Docker locales, PocketBase necesita que crees la colección que contendrá la información del portafolio. Sigue estos pasos súper sencillos:
-            </p>
+      </div>
 
-            <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-2">
-              <p className="font-bold text-slate-800 flex items-center gap-1">
-                <Database className="w-3.5 h-3.5 text-teal-600" /> 1. Crear colección "portafolios":
-              </p>
-              <p className="pl-1 text-[11px] text-slate-600 leading-relaxed">
-                Ingresa a la interfaz de administración de PocketBase (normalmente en <a href="http://localhost:8090/_/" target="_blank" rel="noopener noreferrer" className="text-teal-600 font-bold underline">http://localhost:8090/_/</a>), pulsa en <strong>"New Collection"</strong> y llámala exactamente <code className="bg-slate-100 font-mono px-1 border rounded font-semibold text-slate-800">portafolios</code>.
-              </p>
+      {/* Backup Local Section */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-slate-50">
+          <div className="flex items-center space-x-1.5">
+            <Database className="w-4 h-4 text-slate-700" />
+            <h3 className="font-bold text-slate-800 text-sm">Base de Datos Local (IndexedDB) & Respaldo</h3>
+          </div>
+          <span className="text-[10px] bg-slate-100 text-slate-600 font-mono px-1.5 py-0.5 rounded font-bold">IndexedDB</span>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Tus datos nunca salen de tu navegador. Disfruta de total privacidad y mantén copias de seguridad.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Export */}
+            <div className="bg-slate-50/70 p-3 rounded-lg border border-slate-100 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-slate-800 block uppercase tracking-wider">Exportar Respaldo</span>
+                <p className="text-[9px] text-slate-400 mt-0.5 leading-normal">Descarga tus datos en un archivo JSON local.</p>
+              </div>
+              <button onClick={onExportBackup}
+                className="mt-2.5 flex items-center justify-center space-x-1.5 w-full bg-slate-900 text-white font-medium hover:bg-slate-800 text-[10px] py-2 rounded-md transition cursor-pointer">
+                <Download className="w-3.5 h-3.5" />
+                <span>Guardar Respaldo (.json)</span>
+              </button>
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-3">
-              <p className="font-bold text-slate-800 flex items-center gap-1">
-                <Terminal className="w-3.5 h-3.5 text-teal-600" /> 2. Añadir campos (Fields):
-              </p>
-              <p className="text-[11px] pl-1">Crea estos dos campos indispensables de base:</p>
-              <ul className="list-disc pl-5 text-[10.5px] space-y-2 font-medium text-slate-700">
-                <li>
-                  <strong>Campo <code className="font-mono bg-slate-100 px-1 border rounded">user</code></strong>:<br/>
-                  Selecciona tipo <strong>Relation</strong> apuntando a la colección <code className="font-mono bg-slate-100 px-1">users</code>. En opciones, marca <span className="font-semibold">"Max Select" = 1</span> y <span className="font-semibold">"Non-empty (Required)" = Checked</span>.
-                </li>
-                <li>
-                  <strong>Campo <code className="font-mono bg-slate-105 px-1 border rounded">data</code></strong>:<br/>
-                  Selecciona de tipo <strong>JSON</strong>. Marca <span className="font-semibold">"Non-empty (Required)" = Checked</span>.
-                </li>
-              </ul>
+            {/* Import */}
+            <div className="bg-slate-50/70 p-3 rounded-lg border border-slate-100 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-slate-800 block uppercase tracking-wider">Restaurar Respaldo</span>
+                <p className="text-[9px] text-slate-400 mt-0.5 leading-normal">Sube tu archivo para recuperar tu portafolio.</p>
+              </div>
+              <div className="mt-2.5">
+                <input type="file" ref={fileInputRef} onChange={handleFileChangeForBackup} accept=".json" className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center justify-center space-x-1.5 w-full bg-white text-slate-800 border border-slate-200 font-semibold hover:bg-slate-50 text-[10px] py-2 rounded-md transition cursor-pointer">
+                  <Upload className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Cargar Archivo Respaldo</span>
+                </button>
+                {importStatus === 'success' && (
+                  <div className="mt-1.5 text-[9px] text-emerald-600 font-medium flex items-center gap-1 bg-emerald-50 p-1 rounded">
+                    <Check className="w-3 h-3" /> ¡Respaldo importado con éxito!
+                  </div>
+                )}
+                {importStatus === 'error' && (
+                  <div className="mt-1.5 text-[9px] text-rose-600 font-medium bg-rose-50 p-1 rounded leading-normal">
+                    ⚠ Error: {importError}
+                  </div>
+                )}
+              </div>
             </div>
-
-            <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-2">
-              <p className="font-bold text-slate-800 flex items-center gap-1 font-sans">
-                <Lock className="w-3.5 h-3.5 text-teal-600" /> 3. Configurar Reglas de Acceso (API Rules):
-              </p>
-              <p className="pl-1 text-[11px] text-slate-600 leading-relaxed">
-                En la pestaña de <strong>"API Rules"</strong> de la colección <code className="font-mono bg-slate-100">portafolios</code>, sustituye las reglas vacías (bloqueadas) de List, View, Create y Update por esta regla de propiedad:
-              </p>
-              <pre className="bg-slate-900 text-teal-400 font-mono text-[10.5px] p-2.5 rounded-lg border border-slate-800 mt-1 select-all hover:bg-slate-950 transition cursor-pointer">
-                user = @request.auth.id
-              </pre>
-              <p className="text-[10px] text-slate-500 mt-1.5 font-medium italic">Esto garantiza que ningún usuario pueda espiar o modificar el portafolio de otro.</p>
+            {/* Reset */}
+            <div className="bg-slate-50/70 p-3 rounded-lg border border-slate-100 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-rose-800 block uppercase tracking-wider">Reiniciar Aplicación</span>
+                <p className="text-[9px] text-slate-400 mt-0.5 leading-normal">Borra todo tu portafolio. Acción irreversible.</p>
+              </div>
+              <div className="mt-2.5">
+                {showClearConfirm ? (
+                  <div className="space-y-1">
+                    <button onClick={handleClearClick}
+                      className="flex items-center justify-center space-x-1.5 w-full bg-rose-600 text-white font-medium hover:bg-rose-700 text-[10px] py-1.5 rounded-md transition cursor-pointer">
+                      <Trash2 className="w-3 h-3" />
+                      <span>Confirmar Borrado</span>
+                    </button>
+                    <button onClick={() => setShowClearConfirm(false)}
+                      className="text-center block text-[9px] text-slate-500 hover:underline w-full py-0.5 cursor-pointer">
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={handleClearClick}
+                    className="flex items-center justify-center space-x-1.5 w-full bg-rose-50 text-rose-700 border border-rose-200 font-medium hover:bg-rose-100 text-[10px] py-2 rounded-md transition cursor-pointer">
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Vaciar Datos</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );

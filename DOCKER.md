@@ -1,107 +1,89 @@
 # Guía de Docker - Simulador de Bolsa de Santiago (IPSA)
 
-Debido a que la interfaz de "Code" de Google AI Studio filtra ciertos archivos sin extensión o con un punto inicial (como `Dockerfile` y `.dockerignore`) para mantener la lista de archivos de desarrollo de React más limpia, hemos creado este documento **`DOCKER.md`** para que siempre tengas acceso inmediato a las configuraciones exactas y puedas copiarlas directamente de ser necesario.
+## Requisitos
 
-Los archivos reales (`Dockerfile`, `.dockerignore`, `docker-compose.yml`) **ya están creados y guardados en la raíz** del proyecto, por lo que el comando de Docker funcionará automáticamente. Si por alguna razón el exportador ZIP de tu entorno los omitió, copia el contenido de las secciones a continuación para recrearlos de forma idéntica.
+- Docker y Docker Compose (o Portainer)
 
----
+## Stack
 
-## 1. Contenido de `Dockerfile`
-Crea un archivo llamado `Dockerfile` en el directorio raíz con este contenido:
+- **App**: Node.js 20 con Express + Vite (puerto 3002)
+- **PocketBase**: Base de datos y autenticación (puerto 8090)
 
-```dockerfile
-# --- Stage 1: Build ----
-FROM node:20-alpine AS builder
-WORKDIR /app
+## Inicio Rápido
 
-# Instalar dependencias necesarias para construir el proyecto
-COPY package*.json ./
-RUN npm install
-
-# Copiar el código fuente y construir la aplicación
-COPY . .
-RUN npm run build
-
-# --- Stage 2: Runner ----
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-ENV NODE_ENV=production
-ENV PORT=3002
-
-# Instalar únicamente dependencias de producción (esbuild mantiene configurado 'external' en el package.json)
-COPY package*.json ./
-RUN npm install --only=production --ignore-scripts
-
-# Copiar los recursos compilados (tanto el servidor compilado dist/server.cjs como el frontend en dist/)
-COPY --from=builder /app/dist ./dist
-
-# Exponer el puerto
-EXPOSE 3002
-
-# Executable de inicio
-CMD ["node", "dist/server.cjs"]
+```bash
+docker compose up -d --build
 ```
 
----
+Esto levantará ambos servicios:
+- **App**: `http://localhost:3002`
+- **PocketBase Admin**: `http://localhost:8090/_/`
 
-## 2. Contenido de `.dockerignore`
-Crea un archivo llamado `.dockerignore` en el directorio raíz con este contenido:
+## Configuración de PocketBase
 
-```text
-node_modules
-dist
-.env
-.git
-.github
-npm-debug.log
-README.md
-Dockerfile
-docker-compose.yml
-```
+### 1. Crear cuenta de administrador
 
----
+Entra a `http://localhost:8090/_/` y crea tu cuenta de admin.
 
-## 3. Contenido de `docker-compose.yml`
-Crea un archivo llamado `docker-compose.yml` en el directorio raíz con este contenido:
+### 2. Crear colección "portafolios"
 
+1. Ingresa a la interfaz de administración de PocketBase: `http://localhost:8090/_/`
+2. Pulsa **"New Collection"** y nómbrala exactamente: `portafolios`
+3. Agrega estos dos campos:
+   - **`user`**: tipo **Relation** → colección `users`.
+     - `"Max Select" = 1`
+     - `"Non-empty (Required)" = Sí`
+   - **`data`**: tipo **JSON**.
+     - `"Non-empty (Required)" = Sí`
+4. Ve a la pestaña **"API Rules"** de la colección `portafolios`.
+5. Sustituye las reglas vacías (bloqueadas) de **List**, **View**, **Create** y **Update** por:
+   ```
+   user = @request.auth.id
+   ```
+   Esto garantiza que ningún usuario pueda espiar o modificar el portafolio de otro.
+
+### 3. (Opcional) Configurar URL personalizada
+
+La app detecta automáticamente la URL de PocketBase desde la variable de entorno `POCKETBASE_URL`. En Docker Compose ya viene configurada como `http://pocketbase:8090`.
+
+Si necesitas una URL distinta (ej: subdominio público), edita `docker-compose.yml`:
 ```yaml
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: simulador-bolsa-santiago:latest
-    container_name: bolsa-santiago-simulador
-    ports:
-      - "${PORT:-3002}:${PORT:-3002}"
-    environment:
-      - PORT=${PORT:-3002}
-      - NODE_ENV=production
-      # - GEMINI_API_KEY=tu-api-key-aqui     # Descomenta e ingresa tu clave si se requiere Gemini API
-    restart: unless-stopped
+environment:
+  - POCKETBASE_URL=https://tudominio.com
 ```
 
----
+### 4. Crear usuario normal
 
-## 💻 Instrucciones de Uso
+Desde la app, usa el formulario de registro en la pestaña **Respaldo Cloud** para crear tu usuario.
 
-Para levantar el simulador de portafolio con Docker de manera instantánea, sigue estos pasos desde la consola de tu terminal dentro de la carpeta del proyecto:
+## Despliegue con Portainer + CloudPanel
 
-1. **Construir y levantar el contenedor:**
-   ```bash
-   docker compose up -d --build
-   ```
+1. Sube el proyecto a un repositorio público en GitHub
+2. En Portainer, crea un Stack apuntando al repositorio
+3. Portainer construirá y ejecutará los contenedores automáticamente
+4. En CloudPanel, crea un subdominio (ej: `portafolio.dafda.cl`) que apunte al puerto 3002 del contenedor
+5. Para PocketBase, crea otro subdominio o accede vía IP:8090
 
-2. **Verificar que el contenedor esté corriendo:**
-   ```bash
-   docker ps
-   ```
+### Variables de Entorno
 
-3. **Acceder a la aplicación:**
-   Abre tu navegador de preferencia e ingresa a: **`http://localhost:3002`**
+| Variable | Default | Descripción |
+|----------|---------|-------------|
+| `PORT` | `3002` | Puerto de la aplicación |
+| `POCKETBASE_URL` | `http://pocketbase:8090` | URL interna de PocketBase (Docker) |
+| `POCKETBASE_PUBLIC_URL` | — | URL pública que el navegador usará para conectar a PocketBase (ej: `https://pb.dafda.cl`). Requerido en producción multi-usuario. |
 
-4. **Para detener el contenedor:**
-   ```bash
-   docker compose down
-   ```
+## Comandos Útiles
+
+```bash
+# Construir y levantar
+docker compose up -d --build
+
+# Ver logs
+docker compose logs -f
+
+# Detener
+docker compose down
+
+# Ver contenedores activos
+docker ps
+```

@@ -21,7 +21,9 @@ export interface DividendPayment {
   amountPerShare: number; // CLP por acción
   totalAmount: number;    // CLP total
   payoutDate: string;     // Fecha de pago del dividendo
+  cutoffDate?: string;    // Fecha límite de compra (último día para comprar y recibir dividendo)
   received: boolean;      // Recibido o Estimado
+  estimated?: boolean;    // True si es un dividendo estimado (no confirmado por Yahoo)
 }
 
 export interface TaxRefund {

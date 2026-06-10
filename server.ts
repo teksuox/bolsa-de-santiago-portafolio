@@ -11,25 +11,30 @@ import { createServer as createViteServer } from 'vite';
 // Load environment variables from .env file
 dotenv.config();
 
-// Current local time
-const CURRENT_DATE_STRING = '2026-06-04';
+// Current local time (dynamic for dividend received/estimated logic)
+const CURRENT_DATE_STRING = new Date().toISOString().split('T')[0];
 
 // Correct real fallback values for Chile index indicators in case of API failure
 const FALLBACK_UF = 40763.26;
 const FALLBACK_UTM = 66224.00;
 
 const INITIAL_MARKET_STOCKS_BACKUP = [
-  { ticker: "CHILE", name: "Banco de Chile", price: 166.14, changePercent: 0.85, dividendYield: 8.4, sector: "Financiero", volumeCLP: 1845000000 },
+  { ticker: "CHILE", name: "Banco de Chile", price: 175.90, changePercent: 5.33, dividendYield: 8.4, sector: "Financiero", volumeCLP: 175295736 },
   { ticker: "SQM-B", name: "Sociedad Química y Minera (SQM)", price: 41250.00, changePercent: -1.42, dividendYield: 10.2, sector: "Minero & Químico", volumeCLP: 3450000000 },
-  { ticker: "ENELCHILE", name: "Enel Chile S.A.", price: 58.90, changePercent: 1.15, dividendYield: 9.1, sector: "Servicios Públicos", volumeCLP: 980000000 },
-  { ticker: "CENCOSHOP", name: "Cencosud Shopping S.A.", price: 1515.00, changePercent: -0.20, dividendYield: 7.2, sector: "Inmobiliario Comercial", volumeCLP: 1200000000 },
-  { ticker: "COPEC", name: "Empresas Copec S.A.", price: 6510.00, changePercent: 0.45, dividendYield: 5.8, sector: "Energía & Recursos", volumeCLP: 1540000000 },
-  { ticker: "VAPORES", name: "Cía. Sudamericana de Vapores", price: 54.20, changePercent: -2.35, dividendYield: 13.8, sector: "Transporte Marítimo", volumeCLP: 2100000000 },
-  { ticker: "BSANTANDER", name: "Banco Santander Chile", price: 47.10, changePercent: 0.10, dividendYield: 8.1, sector: "Financiero", volumeCLP: 1150000000 },
+  { ticker: "ENELCHILE", name: "Enel Chile S.A.", price: 76.00, changePercent: 2.43, dividendYield: 9.1, sector: "Servicios Públicos", volumeCLP: 980000000 },
+  { ticker: "CENCOSHOP", name: "Cencosud Shopping S.A.", price: 2323.00, changePercent: 0.28, dividendYield: 7.2, sector: "Inmobiliario Comercial", volumeCLP: 1200000000 },
+  { ticker: "COPEC", name: "Empresas Copec S.A.", price: 6119.50, changePercent: 2.33, dividendYield: 5.8, sector: "Energía & Recursos", volumeCLP: 1540000000 },
+  { ticker: "VAPORES", name: "Cía. Sudamericana de Vapores", price: 43.00, changePercent: 1.32, dividendYield: 13.8, sector: "Transporte Marítimo", volumeCLP: 2100000000 },
+  { ticker: "BSANTANDER", name: "Banco Santander Chile", price: 72.10, changePercent: 5.26, dividendYield: 8.1, sector: "Financiero", volumeCLP: 1150000000 },
   { ticker: "CMPC", name: "Empresas CMPC S.A.", price: 1910.00, changePercent: -0.55, dividendYield: 6.2, sector: "Forestal & Celulosa", volumeCLP: 950000000 },
-  { ticker: "FALABELLA", name: "Falabella S.A.", price: 2940.00, changePercent: 1.95, dividendYield: 3.2, sector: "Retail", volumeCLP: 1680000000 },
+  { ticker: "FALABELLA", name: "Falabella S.A.", price: 5740.00, changePercent: 2.87, dividendYield: 3.2, sector: "Retail", volumeCLP: 1680000000 },
   { ticker: "ANDINA-B", name: "Embotelladora Andina S.A.", price: 2520.00, changePercent: 0.30, dividendYield: 6.9, sector: "Consumo Masivo", volumeCLP: 510000000 }
 ];
+
+// Some tickers use different symbols on Yahoo than our app
+const YAHOO_TICKER_ALIASES: Record<string, string> = {
+  'CENCOSHOP': 'CENCOMALLS',
+};
 
 async function startServer() {
   const app = express();
@@ -45,9 +50,9 @@ async function startServer() {
   let indicatorsCache: { data: any, timestamp: number } | null = null;
   const INDICATORS_CACHE_TTL = 60 * 60 * 1000;
 
-  // Helper function to fetch single stock data beautifully using crumb-free v8/finance/chart endpoint
+  // Helper function to fetch single stock data from Yahoo Finance
   async function fetchStockFromYahoo(ticker: string): Promise<any> {
-    const cleanTicker = ticker.trim().toUpperCase().replace('.SN', '');
+    const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
     const now = Date.now();
 
     // Check memory cache
@@ -55,49 +60,63 @@ async function startServer() {
       return stockCache[cleanTicker].data;
     }
 
-    const symbol = `${cleanTicker}.SN`;
-    const urls = [
-      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2y&events=div`,
-      `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=2y&events=div`
-    ];
-
-    let chartData: any = null;
-    let lastError = '';
-
-    for (const url of urls) {
-      try {
-        const response = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Cache-Control': 'no-cache'
-          }
-        });
-        if (response.ok) {
-          chartData = await response.json();
-          break;
-        } else {
-          lastError = `Status ${response.status}`;
-        }
-      } catch (err: any) {
-        lastError = err.message || err;
+    // Determine possible Yahoo symbols
+    const possibleSymbols: string[] = [];
+    const aliasTicker = YAHOO_TICKER_ALIASES[cleanTicker];
+    if (cleanTicker.startsWith('^')) {
+      possibleSymbols.push(cleanTicker);
+    } else {
+      possibleSymbols.push(`${cleanTicker}.SN`);
+      possibleSymbols.push(cleanTicker);
+      // Try alias if exists (e.g. CENCOSHOP → CENCOMALLS)
+      if (aliasTicker) {
+        possibleSymbols.push(`${aliasTicker}.SN`);
+        possibleSymbols.push(aliasTicker);
       }
     }
 
-    // If fetch failed completely, fall back to cached data or preloaded data
+    let chartData: any = null;
+    let usedSymbol = '';
+    let lastError = '';
+
+    // Try each symbol variation
+    for (const symbol of possibleSymbols) {
+      const urls = [
+        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y&events=div`,
+        `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y&events=div`
+      ];
+      for (const url of urls) {
+        try {
+          const response = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json, text/plain, */*',
+              'Cache-Control': 'no-cache'
+            }
+          });
+          if (response.ok) {
+            chartData = await response.json();
+            usedSymbol = symbol;
+            break;
+          } else {
+            lastError = `Status ${response.status}`;
+          }
+        } catch (err: any) {
+          lastError = err.message || err;
+        }
+      }
+      if (chartData) break;
+    }
+
+    // If all fetches failed, fall back
     if (!chartData) {
       if (stockCache[cleanTicker]) {
-        console.log(`Fetch failed for ${cleanTicker}, returning expired cache.`);
+        console.warn(`[Yahoo API] Fetch failed for ${cleanTicker} (${lastError}), returning expired cache.`);
         return stockCache[cleanTicker].data;
       }
-
-      // Check if we have backup preloaded stats for this stock
       const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
-      if (backupItem) {
-        return backupItem;
-      }
-
-      // Default fallback for new custom stocks that failed to load
+      console.warn(`[Yahoo API] Fetch failed for ${cleanTicker} (${lastError}), using backup data.`);
+      if (backupItem) return backupItem;
       return {
         ticker: cleanTicker,
         name: `${cleanTicker} S.A.`,
@@ -117,28 +136,37 @@ async function startServer() {
         throw new Error(`Incomplete chart payload for ${cleanTicker}`);
       }
 
-      // Current Price (prefer raw regularMarketPrice, fallback to chartPreviousClose, fallback to closing indicator)
-      let price = meta.regularMarketPrice || meta.chartPreviousClose;
+      const price = meta.regularMarketPrice || 150.0;
       const quotes = result.indicators?.quote?.[0];
       const closes = quotes?.close || [];
-      if (!price && closes.length > 0) {
-        price = closes[closes.length - 1] || closes[closes.length - 2];
+
+      // Find last two non-null closes for change % calculation
+      let todayClose = null;
+      let yesterdayClose = null;
+      for (let i = closes.length - 1; i >= 0; i--) {
+        if (closes[i] !== null && todayClose === null) {
+          todayClose = closes[i];
+          continue;
+        }
+        if (closes[i] !== null && todayClose !== null && yesterdayClose === null) {
+          yesterdayClose = closes[i];
+          break;
+        }
       }
-      price = price || 150.0; // Fail-safe default
 
-      const previousClose = meta.chartPreviousClose || price;
+      const previousClose = yesterdayClose !== null ? yesterdayClose : price;
+      const changePercent = (previousClose > 0) ? ((price - previousClose) / previousClose) * 100 : 0;
 
-      // Daily change %
-      let changePercent = 0;
-      if (previousClose > 0) {
-        changePercent = ((price - previousClose) / previousClose) * 100;
-      }
-
-      // Volume
       const volumes = quotes?.volume || [];
-      const volumeCLP = volumes.length > 0 ? (volumes[volumes.length - 1] || volumes[volumes.length - 2] || 1500000) : 1500000;
+      let volumeCLP = 0;
+      for (let i = volumes.length - 1; i >= 0; i--) {
+        if (volumes[i] !== null && volumes[i] !== undefined) {
+          volumeCLP = volumes[i];
+          break;
+        }
+      }
+      if (!volumeCLP) volumeCLP = 1500000;
 
-      // Trailing 12-Month Dividends yield calculation (Sum and yield %)
       const nowUnix = Math.floor(now / 1000);
       const oneYearAgoUnix = nowUnix - (365 * 24 * 60 * 60);
       const dividends = result.events?.dividends;
@@ -157,7 +185,6 @@ async function startServer() {
         dividendYield = (ttmDividendsSum / price) * 100;
       }
 
-      // If yield sum is 0, check if meta has a default yield or use preloaded defaults
       if (dividendYield === 0 && meta.dividendYield) {
         dividendYield = meta.dividendYield;
       } else if (dividendYield === 0) {
@@ -165,7 +192,6 @@ async function startServer() {
         dividendYield = backupItem ? backupItem.dividendYield : 6.0;
       }
 
-      // Retrieve full company name cleanly using Yahoo's public Search API (which iscrumb/captcha-free!)
       let companyName = cleanTicker + " S.A.";
       const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
       if (backupItem) {
@@ -173,7 +199,7 @@ async function startServer() {
       }
 
       try {
-        const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${symbol}&quotesCount=1`;
+        const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${usedSymbol}&quotesCount=1`;
         const searchRes = await fetch(searchUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -200,7 +226,6 @@ async function startServer() {
         volumeCLP: Math.round(volumeCLP)
       };
 
-      // Set cache
       stockCache[cleanTicker] = {
         data: processedData,
         timestamp: now
@@ -208,7 +233,7 @@ async function startServer() {
 
       return processedData;
     } catch (err: any) {
-      console.error(`Error parsing Yahoo response for ${cleanTicker}:`, err);
+      console.error(`[Yahoo API] Error parsing response for ${cleanTicker}:`, err);
       const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
       return backupItem || {
         ticker: cleanTicker,
@@ -222,7 +247,84 @@ async function startServer() {
     }
   }
 
-  // API Route: Market Watch quotes
+  // API Route: Expose PocketBase URL to frontend (auto-configured, not user-visible)
+  // The browser needs a reachable URL. In Docker the internal http://pocketbase:8090
+  // isn't browser-routable, so we remap to localhost. Admins can set
+  // POCKETBASE_PUBLIC_URL (e.g. https://pb.dafda.cl) for production multi-user.
+  app.get('/api/pocketbase-config', (req, res) => {
+    const internalUrl = process.env.POCKETBASE_URL || 'http://localhost:8090';
+    const overrideUrl = process.env.POCKETBASE_PUBLIC_URL;
+    if (overrideUrl) {
+      return res.json({ url: overrideUrl });
+    }
+    // Docker internal hostname not browser-routable → use localhost with external port
+    const externalPort = process.env.PB_EXTERNAL_PORT || '8091';
+    const browserUrl = internalUrl.includes('pocketbase')
+      ? `http://localhost:${externalPort}`
+      : internalUrl;
+    res.json({ url: browserUrl });
+  });
+
+  app.get('/api/portfolio-history', async (req, res) => {
+    try {
+      const tickersParam = req.query.tickers;
+      if (!tickersParam || typeof tickersParam !== 'string') {
+        return res.status(400).json({ error: "Debe proveer tickers separados por coma" });
+      }
+      const tickers = tickersParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+
+      const results = await Promise.all(tickers.map(async (ticker) => {
+        const cleanTicker = ticker.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const aliasTicker = YAHOO_TICKER_ALIASES[cleanTicker];
+        const possibleSymbols = aliasTicker
+          ? [`${aliasTicker}.SN`, aliasTicker, `${cleanTicker}.SN`, cleanTicker]
+          : [`${cleanTicker}.SN`, cleanTicker];
+
+        let chartData: any = null;
+        for (const symbol of possibleSymbols) {
+          try {
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
+            const response = await fetch(url, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json'
+              }
+            });
+            if (response.ok) {
+              chartData = await response.json();
+              break;
+            }
+          } catch { /* try next */ }
+        }
+
+        if (!chartData?.chart?.result?.[0]) {
+          return { ticker: cleanTicker, history: [] };
+        }
+
+        const result = chartData.chart.result[0];
+        const timestamps: number[] = result.timestamp || [];
+        const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+
+        const history: { date: string; close: number }[] = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (closes[i] != null) {
+            history.push({
+              date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+              close: Math.round(closes[i]! * 100) / 100
+            });
+          }
+        }
+
+        return { ticker: cleanTicker, history };
+      }));
+
+      res.json(results);
+    } catch (err: any) {
+      console.error("Error fetching portfolio history:", err?.message || err);
+      res.status(500).json({ error: "Error al obtener historial de precios" });
+    }
+  });
+
   app.get('/api/market-stocks', async (req, res) => {
     try {
       const tickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
@@ -289,7 +391,7 @@ async function startServer() {
   app.get('/api/chile-indicators', async (req, res) => {
     const now = Date.now();
 
-    // Check indicators cache
+    // Check in-memory cache
     if (indicatorsCache && (now - indicatorsCache.timestamp < INDICATORS_CACHE_TTL)) {
       return res.json(indicatorsCache.data);
     }
@@ -391,59 +493,129 @@ async function startServer() {
       const results: any[] = [];
       
       // Fetch for each ticker in parallel
-      await Promise.all(holdings.map(async (h: any) => {
-        const { ticker, buyDate, shares } = h;
-        if (!ticker) return;
+      // Group holdings by ticker to aggregate shares and find earliest buyDate
+      const tickerGroups = new Map<string, { shares: number; buyDate: string }>();
+      for (const h of holdings) {
+        const t = h.ticker?.trim().toUpperCase() || '';
+        if (!t) continue;
+        const existing = tickerGroups.get(t);
+        if (existing) {
+          existing.shares += Number(h.shares) || 0;
+          if (h.buyDate < existing.buyDate) existing.buyDate = h.buyDate;
+        } else {
+          tickerGroups.set(t, { shares: Number(h.shares) || 0, buyDate: h.buyDate || '2000-01-01' });
+        }
+      }
 
-        const symbol = `${ticker}.SN`;
-        // Query last 3 years of dividends across multiple Yahoo hosts
-        const urls = [
-          `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3y&events=div`,
-          `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3y&events=div`
-        ];
+      await Promise.all(Array.from(tickerGroups.entries()).map(async ([ticker, group]) => {
+        const { buyDate, shares } = group;
+
+      const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
+        const aliasTicker = YAHOO_TICKER_ALIASES[cleanTicker];
+        const symbols: string[] = [];
+        if (cleanTicker.startsWith('^')) {
+          symbols.push(cleanTicker);
+        } else {
+          symbols.push(`${cleanTicker}.SN`, cleanTicker);
+          if (aliasTicker) {
+            symbols.push(`${aliasTicker}.SN`, aliasTicker);
+          }
+        }
         
         let data: any = null;
-        for (const url of urls) {
-          try {
-            const response = await fetch(url, { 
-              headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
-              } 
-            });
-            if (response.ok) {
-              data = await response.json();
-              break;
-            } else {
-              console.warn(`Yahoo returned status ${response.status} for event sync from ${url}`);
+        for (const symbol of symbols) {
+          const urls = [
+            `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3y&events=div`,
+            `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3y&events=div`
+          ];
+          for (const url of urls) {
+            try {
+              const response = await fetch(url, { 
+                headers: { 
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+                } 
+              });
+              if (response.ok) {
+                data = await response.json();
+                break;
+              } else {
+                console.warn(`Yahoo returned status ${response.status} for event sync from ${url}`);
+              }
+            } catch (err: any) {
+              console.error(`Failed to connect to ${url} for ${ticker}:`, err?.message || err);
             }
-          } catch (err: any) {
-            console.error(`Failed to connect to ${url} for ${ticker}:`, err?.message || err);
           }
+          if (data) break;
         }
         
         try {
           if (!data) return;
           const divEvents = data?.chart?.result?.[0]?.events?.dividends;
           
+          // Collect all dividend events sorted by date
+          const allDivs: { date: string; amount: number; timestamp: number }[] = [];
           if (divEvents && typeof divEvents === 'object') {
             Object.values(divEvents).forEach((d: any) => {
-              const payDate = new Date(d.date * 1000).toISOString().split('T')[0];
-              
-              // Only include if payout date is after or equal to the buyDate
-              if (payDate >= buyDate) {
-                const amountPerShare = Number(d.amount);
-                results.push({
-                  id: `div-sys-${ticker}-${d.date}`,
-                  ticker,
-                  sharesCount: Number(shares) || 1000,
-                  amountPerShare,
-                  totalAmount: Math.round((Number(shares) || 1000) * amountPerShare),
-                  payoutDate: payDate,
-                  // Determine status based on current date
-                  received: payDate < CURRENT_DATE_STRING
-                });
-              }
+              const exDate = new Date(d.date * 1000).toISOString().split('T')[0];
+              allDivs.push({ date: exDate, amount: Number(d.amount), timestamp: d.date });
             });
+          }
+          allDivs.sort((a, b) => a.timestamp - b.timestamp);
+
+          // 1. Include past dividends where exDate >= buyDate (user owned the stock)
+          for (const d of allDivs) {
+            if (d.date >= buyDate && d.date <= CURRENT_DATE_STRING) {
+              results.push({
+                id: `div-sys-${ticker}-${d.timestamp}`,
+                ticker,
+                sharesCount: shares,
+                amountPerShare: d.amount,
+                totalAmount: Math.round(shares * d.amount),
+                payoutDate: d.date,
+                cutoffDate: d.date,
+                received: true
+              });
+            }
+          }
+
+          // 2. Estimate future dividend from historical pattern
+          if (allDivs.length >= 2) {
+            // Calculate average gap between payments
+            let totalGap = 0;
+            for (let i = 1; i < allDivs.length; i++) {
+              totalGap += allDivs[i].timestamp - allDivs[i-1].timestamp;
+            }
+            const avgGapDays = totalGap / (allDivs.length - 1) / 86400;
+            const lastDiv = allDivs[allDivs.length - 1];
+            const nextDate = new Date((lastDiv.timestamp + totalGap / (allDivs.length - 1)) * 1000);
+            const nextDateStr = nextDate.toISOString().split('T')[0];
+
+            // Only estimate if next date is within 12 months and in the future
+            const oneYearFromNow = new Date();
+            oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+            const oneYearFromNowStr = oneYearFromNow.toISOString().split('T')[0];
+
+            if (nextDateStr > CURRENT_DATE_STRING && nextDateStr <= oneYearFromNowStr) {
+              // Use average of last 2-3 amounts as estimated amount
+              const recentAmounts = allDivs.slice(-3).map(d => d.amount);
+              const estAmount = recentAmounts.reduce((s, a) => s + a, 0) / recentAmounts.length;
+
+              // Calculate estimated cutoffDate (day before ex-date typically)
+              const cutoffDate = new Date(nextDate.getTime() - 6 * 86400000);
+              const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+
+              results.push({
+                id: `div-sys-${ticker}-est-${nextDateStr}`,
+                ticker,
+                sharesCount: shares,
+                amountPerShare: Math.round(estAmount * 100) / 100,
+                totalAmount: Math.round(shares * Math.round(estAmount * 100) / 100),
+                payoutDate: nextDateStr,
+                cutoffDate: cutoffDateStr,
+                received: false,
+                estimated: true
+              });
+            }
           }
         } catch (err: any) {
           console.error(`Error syncing dividends for ticker ${ticker}:`, err?.message || err);
@@ -453,6 +625,11 @@ async function startServer() {
       // Sort chronological by payout date desc
       results.sort((a, b) => new Date(b.payoutDate).getTime() - new Date(a.payoutDate).getTime());
 
+      if (results.length === 0) {
+        console.warn(`Sync dividends: no results found for ${holdings.length} holdings.`);
+      } else {
+        console.log(`Sync dividends: ${results.length} results for ${holdings.length} holdings.`);
+      }
       res.json(results);
     } catch (err: any) {
       console.error("Error in sync-dividends API:", err?.message || err);
@@ -460,7 +637,14 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
+  // API: Expose PocketBase URL to the frontend so it knows where to connect
+  app.get('/api/config', (req, res) => {
+    res.json({
+      pocketbaseUrl: process.env.POCKETBASE_URL || 'http://localhost:8090'
+    });
+  });
+
+  // Serve static frontend assets
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -475,9 +659,25 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Graceful shutdown for Docker
+  const shutdown = () => {
+    console.log('Shutting down gracefully...');
+    server.close(() => {
+      console.log('Server closed.');
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.error('Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 startServer();

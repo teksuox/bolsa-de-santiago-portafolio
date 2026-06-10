@@ -5,9 +5,10 @@
 
 import React, { useState } from 'react';
 import { MarketStock, StockAlert } from '../types';
-import { formatCLP, formatPercent } from '../utils';
+import { formatCLP, formatPercent, normalizeTicker } from '../utils';
 import { Search, Flame, TrendingUp, TrendingDown, DollarSign, PlusCircle, Check, Sparkles, Filter, Trash2, RotateCw, X, Star, Bell, RotateCcw } from 'lucide-react';
 import StockHistoryVisualizer from './StockHistoryVisualizer';
+import { useSortable } from '../lib/useSortable';
 
 interface MarketWatchProps {
   marketStocks: MarketStock[];
@@ -54,14 +55,24 @@ export default function MarketWatch({
 
   const handleSearchAndAdd = async () => {
     if (!customTicker.trim()) return;
+    const normalizedInput = normalizeTicker(customTicker);
     setIsSearching(true);
     setSearchError('');
     setSearchSuccess('');
 
+    const exists = marketStocks.some(s => normalizeTicker(s.ticker) === normalizedInput);
+    if (exists) {
+      setSearchError(`"${normalizedInput}" ya existe en la grilla. Usa el filtro de búsqueda para localizarlo.`);
+      setCustomTicker('');
+      setSearch(normalizedInput);
+      setIsSearching(false);
+      return;
+    }
+
     try {
-      const resp = await fetch(`/api/search-stock?ticker=${encodeURIComponent(customTicker.trim())}`);
+      const resp = await fetch(`/api/search-stock?ticker=${encodeURIComponent(normalizedInput)}`);
       if (!resp.ok) {
-        throw new Error(`El nemotécnico "${customTicker.trim().toUpperCase()}" no arrojó resultados o Yahoo Finance no respondió.`);
+        throw new Error(`El nemotécnico "${normalizedInput}" no arrojó resultados o Yahoo Finance no respondió.`);
       }
       const data = await resp.json();
       if (data && data.ticker) {
@@ -70,7 +81,7 @@ export default function MarketWatch({
         }
         setSearchSuccess(`${data.ticker} - ${data.name}`);
         setCustomTicker('');
-        setSearch(data.ticker); // Pre-fill searching to locate in list
+        setSearch(data.ticker);
         setTimeout(() => setSearchSuccess(''), 8000);
       } else {
         throw new Error('Respuesta inválida de la Bolsa');
@@ -92,9 +103,12 @@ export default function MarketWatch({
     }, 2500);
   };
 
+  const normalizeText = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ñ/g, 'n');
+
   const filteredStocks = marketStocks.filter(stock => {
-    const matchesSearch = stock.ticker.toLowerCase().includes(search.toLowerCase()) || 
-                          stock.name.toLowerCase().includes(search.toLowerCase());
+    const q = normalizeText(search);
+    const matchesSearch = normalizeText(stock.ticker).includes(q) || 
+                          normalizeText(stock.name).includes(q);
     const matchesSector = selectedSector === 'ALL' || stock.sector === selectedSector;
     
     const isAlreadyOwned = holdings.some(h => h.ticker === stock.ticker);
@@ -104,6 +118,8 @@ export default function MarketWatch({
 
     return matchesSearch && matchesSector && matchesPortfolio;
   });
+
+  const { sortedData: sortedStocks, sortKey: mwSortKey, toggleSort: mwToggleSort, getSortIcon: mwIcon } = useSortable(filteredStocks, '');
 
   return (
     <div className="space-y-6">
@@ -263,7 +279,7 @@ export default function MarketWatch({
               >
                 En mi Portafolio
                 <span className="bg-emerald-200 text-emerald-950 font-mono text-[9px] px-1.5 py-0.2 rounded-full leading-tight font-bold">
-                  {holdings.length}
+                  {new Set(holdings.map(h => h.ticker)).size}
                 </span>
               </button>
               <button
@@ -317,23 +333,22 @@ export default function MarketWatch({
 
       {/* Stock List Panel */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="table-scroll-container">
         <table className="w-full text-left text-xs">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-500 uppercase tracking-wider">
               <th className="py-3 px-2 w-10 text-center">⭐</th>
-              <th className="py-3 px-4">Nemotécnico</th>
-              <th className="py-3 px-4 font-normal">Nombre Corto</th>
-              <th className="py-3 px-4 text-right">Precio Actual</th>
+              <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => mwToggleSort('ticker')}>Nemotécnico{mwIcon('ticker')}</th>
+              <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => mwToggleSort('price')}>Precio Actual{mwIcon('price')}</th>
               <th className="py-3 px-4 text-center bg-teal-50/25">Límite Alerta 🔔</th>
-              <th className="py-3 px-4 text-right">Var. Diaria</th>
-              <th className="py-3 px-4 text-right">Rendimiento dividendo % (Est.)</th>
-              <th className="py-3 px-4 font-normal pl-6">Sector Principal</th>
-              <th className="py-3 px-4 text-right">Volumen Diario</th>
+              <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => mwToggleSort('changePercent')}>Var. Diaria{mwIcon('changePercent')}</th>
+              <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => mwToggleSort('dividendYield')}>Rendimiento{mwIcon('dividendYield')}</th>
+              <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => mwToggleSort('sector')}>Sector{mwIcon('sector')}</th>
               <th className="py-3 px-4 text-center">Inversión</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {filteredStocks.map((stock) => {
+            {sortedStocks.map((stock) => {
               const isAlreadyOwned = holdings.some(h => h.ticker === stock.ticker);
               const isTickingBuy = justBoughtTicker === stock.ticker;
               const alert = alerts.find(a => a.ticker === stock.ticker);
@@ -376,11 +391,6 @@ export default function MarketWatch({
                         </span>
                       )}
                     </td>
-
-                  {/* Name */}
-                  <td className="py-4 px-4 text-slate-600 font-medium">
-                    {stock.name}
-                  </td>
 
                   {/* Price */}
                   <td className="py-4 px-4 text-right font-bold text-slate-800 font-mono">
@@ -461,11 +471,6 @@ export default function MarketWatch({
                     {stock.sector}
                   </td>
 
-                  {/* Volume */}
-                  <td className="py-4 px-4 text-right text-slate-400 font-mono">
-                    {formatCLP(stock.volumeCLP)}
-                  </td>
-
                   {/* Actions */}
                   <td className="py-4 px-4 text-center">
                     <div className="flex items-center justify-center space-x-2">
@@ -522,6 +527,7 @@ export default function MarketWatch({
             })}
           </tbody>
         </table>
+        </div>
         {filteredStocks.length === 0 && (
           <div className="p-8 text-center text-slate-400">
             No se encontraron acciones con los filtros actuales.

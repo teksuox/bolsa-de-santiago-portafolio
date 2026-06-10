@@ -6,6 +6,7 @@
 import React, { useState } from 'react';
 import { TaxRefund } from '../types';
 import { formatCLP, formatDateChilean } from '../utils';
+import { useSortable } from '../lib/useSortable';
 import { FileCheck, Plus, Trash2, HelpCircle, AlertCircle, Landmark, ShieldCheck } from 'lucide-react';
 
 interface TaxRefundsProps {
@@ -38,6 +39,8 @@ export default function TaxRefunds({ refunds, onAddRefund, onDeleteRefund }: Tax
   };
 
   const totalRefunded = refunds.filter(r => r.received).reduce((sum, r) => sum + r.amount, 0);
+
+  const { sortedData: sortedRefunds, sortKey: trSortKey, toggleSort: trToggleSort, getSortIcon: trIcon } = useSortable(refunds, '');
 
   return (
     <div className="space-y-6">
@@ -99,16 +102,16 @@ export default function TaxRefunds({ refunds, onAddRefund, onDeleteRefund }: Tax
               {/* Year */}
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Año Tributario</label>
-                <select
+                <input
+                  type="number"
+                  min="1900"
+                  max="2100"
+                  required
                   value={year}
-                  onChange={(e) => setYear(Number(e.target.value))}
+                  onChange={(e) => setYear(e.target.value === '' ? 2026 : Number(e.target.value))}
+                  placeholder="Ej: 2026"
                   className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white focus:outline-none"
-                >
-                  <option value={2026}>AT 2026 (Año Comercial 2025)</option>
-                  <option value={2025}>AT 2025 (Año Comercial 2024)</option>
-                  <option value={2024}>AT 2024 (Año Comercial 2023)</option>
-                  <option value={2023}>AT 2023 (Año Comercial 2022)</option>
-                </select>
+                />
               </div>
 
               {/* Amount */}
@@ -173,7 +176,7 @@ export default function TaxRefunds({ refunds, onAddRefund, onDeleteRefund }: Tax
           </form>
         )}
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto table-scroll-container">
           {refunds.length === 0 ? (
             <div className="p-12 text-center text-slate-400">
               <FileCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
@@ -184,15 +187,15 @@ export default function TaxRefunds({ refunds, onAddRefund, onDeleteRefund }: Tax
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/70 font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="py-3 px-4">Año Tributario (SII Chile)</th>
-                  <th className="py-3 px-4 text-right">Monto Devuelto</th>
-                  <th className="py-3 px-4">Día de Devolución</th>
+                  <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => trToggleSort('year')}>Año Tributario (SII Chile){trIcon('year')}</th>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => trToggleSort('amount')}>Monto Devuelto{trIcon('amount')}</th>
+                  <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => trToggleSort('refundDate')}>Día de Devolución{trIcon('refundDate')}</th>
                   <th className="py-3 px-4 text-center">Estado Oficial</th>
                   <th className="py-3 px-4 text-center">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {refunds.map((ref) => (
+                {sortedRefunds.map((ref) => (
                   <tr key={ref.id} className="hover:bg-slate-50/50 transition">
                     <td className="py-4 px-4 font-bold text-slate-900">
                       Operación Renta {ref.year} (F22)

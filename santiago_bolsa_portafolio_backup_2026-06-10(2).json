@@ -1,0 +1,303 @@
+{
+  "holdings": [
+    {
+      "ticker": "CHILE",
+      "name": "Banco de Chile",
+      "shares": 299,
+      "buyPrice": 167.01,
+      "currentPrice": 175.9,
+      "buyDate": "2026-06-06",
+      "annualTargetYield": 6.1,
+      "id": "h-1780778265889"
+    },
+    {
+      "ticker": "COPEC",
+      "name": "Empresas Copec S.A.",
+      "shares": 4,
+      "buyPrice": 6142.9,
+      "currentPrice": 6119.5,
+      "buyDate": "2026-06-06",
+      "annualTargetYield": 2.9,
+      "id": "h-1780778299945"
+    },
+    {
+      "ticker": "CFISPETF",
+      "name": "Fondo de Inversion ETF Singular S&P 500 Fund",
+      "shares": 5,
+      "buyPrice": 1691,
+      "currentPrice": 1712.1,
+      "buyDate": "2026-06-06",
+      "annualTargetYield": 6,
+      "id": "h-1780778340144"
+    },
+    {
+      "ticker": "PEHUENCHE",
+      "name": "Empresa Eléctrica Pehuenche S.A.",
+      "shares": 9,
+      "buyPrice": 2714.9,
+      "currentPrice": 2653.7,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 7.8,
+      "id": "h-1780926733992"
+    },
+    {
+      "ticker": "QUINENCO",
+      "name": "Quiñenco SA",
+      "shares": 6,
+      "buyPrice": 3710.4,
+      "currentPrice": 3800,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 11,
+      "id": "h-1780926764335"
+    },
+    {
+      "ticker": "ENELCHILE",
+      "name": "Enel Chile S.A.",
+      "shares": 333,
+      "buyPrice": 75.02,
+      "currentPrice": 76,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 4.6,
+      "id": "h-1780926792166"
+    },
+    {
+      "ticker": "ANDINA-B",
+      "name": "Embotelladora Andina S.A.",
+      "shares": 12,
+      "buyPrice": 4134.8,
+      "currentPrice": 4180,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 4.1,
+      "id": "h-1780927273227"
+    },
+    {
+      "ticker": "CFMITNIPSA",
+      "name": "Fondo Mutuo ETF IT NOW S&P IPSA UNICA",
+      "shares": 2,
+      "buyPrice": 4729.8,
+      "currentPrice": 4816.6,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 6,
+      "id": "h-1780927808983"
+    },
+    {
+      "ticker": "CFISPETF",
+      "name": "Fondo de Inversion ETF Singular S&P 500 Fund",
+      "shares": 6,
+      "buyPrice": 1729.4,
+      "currentPrice": 1712.1,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 6,
+      "id": "h-1780928940296"
+    },
+    {
+      "ticker": "ZOFRI",
+      "name": "Zona Franca de Iquique S.A.",
+      "shares": 25,
+      "buyPrice": 990,
+      "currentPrice": 997.91,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 6.9,
+      "id": "h-1780930092168"
+    },
+    {
+      "ticker": "SMSAAM",
+      "name": "Sociedad Matriz SAAM S.A.",
+      "shares": 24,
+      "buyPrice": 161.31,
+      "currentPrice": 160.59,
+      "buyDate": "2026-06-08",
+      "annualTargetYield": 1.2,
+      "id": "h-1780935363100"
+    }
+  ],
+  "dividends": [
+    {
+      "id": "div-sys-ANDINA-B-est-2026-09-09",
+      "ticker": "ANDINA-B",
+      "sharesCount": 12,
+      "amountPerShare": 57.57,
+      "totalAmount": 691,
+      "payoutDate": "2026-09-09",
+      "cutoffDate": "2026-09-03",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-CHILE-est-2027-03-19",
+      "ticker": "CHILE",
+      "sharesCount": 299,
+      "amountPerShare": 9.93,
+      "totalAmount": 2969,
+      "payoutDate": "2027-03-19",
+      "cutoffDate": "2027-03-13",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-COPEC-est-2026-10-27",
+      "ticker": "COPEC",
+      "sharesCount": 4,
+      "amountPerShare": 111.51,
+      "totalAmount": 446,
+      "payoutDate": "2026-10-27",
+      "cutoffDate": "2026-10-21",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-ENELCHILE-est-2026-10-31",
+      "ticker": "ENELCHILE",
+      "sharesCount": 333,
+      "amountPerShare": 2.28,
+      "totalAmount": 759,
+      "payoutDate": "2026-10-31",
+      "cutoffDate": "2026-10-25",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-PEHUENCHE-est-2026-09-22",
+      "ticker": "PEHUENCHE",
+      "sharesCount": 9,
+      "amountPerShare": 70.35,
+      "totalAmount": 633,
+      "payoutDate": "2026-09-22",
+      "cutoffDate": "2026-09-16",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-QUINENCO-est-2026-11-11",
+      "ticker": "QUINENCO",
+      "sharesCount": 6,
+      "amountPerShare": 216.58,
+      "totalAmount": 1299,
+      "payoutDate": "2026-11-11",
+      "cutoffDate": "2026-11-05",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-SMSAAM-est-2026-11-18",
+      "ticker": "SMSAAM",
+      "sharesCount": 24,
+      "amountPerShare": 5.17,
+      "totalAmount": 124,
+      "payoutDate": "2026-11-18",
+      "cutoffDate": "2026-11-12",
+      "received": false,
+      "estimated": true
+    },
+    {
+      "id": "div-sys-ZOFRI-est-2026-11-16",
+      "ticker": "ZOFRI",
+      "sharesCount": 25,
+      "amountPerShare": 36.19,
+      "totalAmount": 904.75,
+      "payoutDate": "2026-11-27",
+      "cutoffDate": "2026-11-21",
+      "received": false,
+      "estimated": false
+    }
+  ],
+  "refunds": [],
+  "annualPerformancePercent": 7,
+  "customStocks": [
+    {
+      "ticker": "BICE",
+      "name": "Bicecorp S.A.",
+      "price": 384.98,
+      "changePercent": 0.41,
+      "dividendYield": 2.7,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 310171
+    },
+    {
+      "ticker": "CFISPETF",
+      "name": "Fondo de Inversion ETF Singular S&P 500 Fund",
+      "price": 1712.1,
+      "changePercent": -1.15,
+      "dividendYield": 6,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 108645
+    },
+    {
+      "ticker": "CFMITNIPSA",
+      "name": "Fondo Mutuo ETF IT NOW S&P IPSA UNICA",
+      "price": 4816.6,
+      "changePercent": 2.37,
+      "dividendYield": 6,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 222116
+    },
+    {
+      "ticker": "HABITAT",
+      "name": "Administradora de Fondos de Pensiones Habitat S.A.",
+      "price": 1350.6,
+      "changePercent": 0.32,
+      "dividendYield": 3,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 37856
+    },
+    {
+      "ticker": "PEHUENCHE",
+      "name": "Empresa Eléctrica Pehuenche S.A.",
+      "price": 2653.7,
+      "changePercent": -1.69,
+      "dividendYield": 6,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 4805
+    },
+    {
+      "ticker": "PROVIDA",
+      "name": "Administradora de Fondos de Pensiones Provida S.A.",
+      "price": 5035.1,
+      "changePercent": -0.03,
+      "dividendYield": 7.7,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 2451
+    },
+    {
+      "ticker": "QUINENCO",
+      "name": "Quiñenco SA",
+      "price": 3800,
+      "changePercent": 2.56,
+      "dividendYield": 10.8,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 571140
+    },
+    {
+      "ticker": "SMSAAM",
+      "name": "Sociedad Matriz SAAM S.A.",
+      "price": 160.59,
+      "changePercent": -0.3,
+      "dividendYield": 1.2,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 63540
+    },
+    {
+      "ticker": "TRICAHUE",
+      "name": "Inversiones Tricahue S.A.",
+      "price": 1400,
+      "changePercent": -5.53,
+      "dividendYield": 7.7,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 4345
+    },
+    {
+      "ticker": "ZOFRI",
+      "name": "Zona Franca de Iquique S.A.",
+      "price": 997.91,
+      "changePercent": 0.54,
+      "dividendYield": 7,
+      "sector": "Bolsa de Santiago",
+      "volumeCLP": 13583
+    }
+  ],
+  "deletedTickers": [
+    "CENCOSHOP",
+    "HABITAT",
+    "QUINENCO"
+  ]
+}
