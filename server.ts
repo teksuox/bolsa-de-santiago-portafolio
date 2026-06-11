@@ -265,22 +265,35 @@ async function startServer() {
     }
   }
 
-  // API Route: Expose PocketBase URL to frontend (auto-configured, not user-visible)
-  // The browser needs a reachable URL. In Docker the internal http://pocketbase:8090
-  // isn't browser-routable, so we remap to localhost. Admins can set
-  // POCKETBASE_PUBLIC_URL (e.g. https://pb.dafda.cl) for production multi-user.
-  app.get('/api/pocketbase-config', (req, res) => {
-    const internalUrl = process.env.POCKETBASE_URL || 'http://localhost:8090';
-    const overrideUrl = process.env.POCKETBASE_PUBLIC_URL;
-    if (overrideUrl) {
-      return res.json({ url: overrideUrl });
+  // Proxy: forwards /api/pb/* requests to PocketBase (same-origin, no CORS needed)
+  const PB_INTERNAL = process.env.POCKETBASE_URL || 'http://pocketbase:8090';
+  app.use('/api/pb', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+    const targetPath = req.originalUrl.replace('/api/pb', '');
+    const targetUrl = `${PB_INTERNAL}${targetPath}`;
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': req.headers['content-type'] as string || 'application/json',
+      };
+      if (req.headers.authorization) headers['Authorization'] = req.headers.authorization as string;
+      if (req.headers.cookie) headers['Cookie'] = req.headers.cookie as string;
+
+      const options: RequestInit = {
+        method: req.method,
+        headers,
+      };
+      if (req.method !== 'GET' && req.method !== 'HEAD' && Buffer.isBuffer(req.body) && req.body.length > 0) {
+        options.body = req.body;
+      }
+
+      const pbResp = await fetch(targetUrl, options);
+      const body = await pbResp.text();
+      const setCookie = pbResp.headers.get('set-cookie');
+      if (setCookie) res.setHeader('Set-Cookie', setCookie);
+      res.status(pbResp.status).type(pbResp.headers.get('content-type') || 'application/json').send(body);
+    } catch (err: any) {
+      console.error('PB proxy error:', err.message);
+      res.status(502).json({ error: 'PocketBase unreachable' });
     }
-    // Docker internal hostname not browser-routable → use localhost with external port
-    const externalPort = process.env.PB_EXTERNAL_PORT || '8091';
-    const browserUrl = internalUrl.includes('pocketbase')
-      ? `http://localhost:${externalPort}`
-      : internalUrl;
-    res.json({ url: browserUrl });
   });
 
   app.get('/api/portfolio-history', async (req, res) => {

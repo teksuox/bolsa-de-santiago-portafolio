@@ -11,6 +11,7 @@ services:
       - PORT=${PORT:-3002}
       - NODE_ENV=production
       - POCKETBASE_URL=http://pocketbase:8090
+      - POCKETBASE_PUBLIC_URL=${POCKETBASE_PUBLIC_URL:-}
       - PB_EXTERNAL_PORT=8091
     depends_on:
       - pocketbase

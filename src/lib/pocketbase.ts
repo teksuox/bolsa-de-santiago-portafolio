@@ -5,14 +5,22 @@ const DEFAULT_PB_URL = 'http://localhost:8090';
 
 export const pb = new PocketBase(DEFAULT_PB_URL);
 
-// Auto-configure PocketBase URL from server (admins set it via env)
+// Try the same-origin proxy first, then fall back to direct URLs
 export async function autoConfigurePBUrl(): Promise<void> {
+  // 1. Try same-origin proxy (works in production, no CORS)
+  const proxyOk = await checkPocketBaseHealth('/api/pb');
+  if (proxyOk) {
+    pb.baseUrl = '/api/pb';
+    localStorage.setItem('pocketbase_url', '/api/pb');
+    return;
+  }
+
+  // 2. Try configured public URL from server
   try {
     const res = await fetch('/api/pocketbase-config');
     if (res.ok) {
       const config = await res.json();
       if (config.url) {
-        // Test the URL first, fall back to common alternatives
         const tested = await findWorkingUrl(config.url);
         if (tested) {
           pb.baseUrl = tested;
@@ -25,7 +33,7 @@ export async function autoConfigurePBUrl(): Promise<void> {
     // ignore
   }
 
-  // Fallback: try stored URL, then common ports
+  // 3. Fallback: try stored URL, then common ports
   const stored = localStorage.getItem('pocketbase_url');
   const candidates = stored
     ? [stored, 'http://localhost:8091', 'http://localhost:8090']
@@ -43,14 +51,12 @@ export async function autoConfigurePBUrl(): Promise<void> {
 
 async function findWorkingUrl(url: string): Promise<string | null> {
   if (await checkPocketBaseHealth(url)) return url;
-  // Try common alternatives
   for (const alt of ['http://localhost:8091', 'http://localhost:8090']) {
     if (alt !== url && await checkPocketBaseHealth(alt)) return alt;
   }
   return null;
 }
 
-// Keep updatePocketBaseUrl for backward compat but internally it's auto now
 export function updatePocketBaseUrl(url: string) {
   localStorage.setItem('pocketbase_url', url);
   pb.baseUrl = url;
