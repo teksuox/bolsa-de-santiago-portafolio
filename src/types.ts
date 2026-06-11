@@ -39,6 +39,7 @@ export interface MarketStock {
   name: string;
   price: number;         // CLP
   changePercent: number; // Variación diaria %
+  previousClose?: number; // Cierre anterior
   dividendYield: number; // Dividendo anual aproximado %
   sector: string;
   volumeCLP: number;     // Volumen diario de transacciones

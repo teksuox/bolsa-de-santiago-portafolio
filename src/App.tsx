@@ -766,12 +766,18 @@ export default function App() {
     setDividends(prev => prev.map(d => {
       if (d.id === id) {
         const amtPerShare = updates.amountPerShare ?? d.amountPerShare;
-        updated = { ...d, ...updates, totalAmount: d.sharesCount * amtPerShare };
+        // If editing a synced dividend, change its id so "Recuperar fechas" won't overwrite it
+        const newId = d.id.startsWith('div-sys-') ? `div-${Date.now()}` : d.id;
+        updated = { ...d, ...updates, id: newId, totalAmount: d.sharesCount * amtPerShare };
         return updated;
       }
       return d;
     }));
     if (updated) {
+      // Remove old key from IndexedDB if id changed
+      if (id !== updated.id) {
+        await portafolioDB.deleteDividend(id);
+      }
       await portafolioDB.saveDividend(updated);
     }
   };
@@ -781,13 +787,19 @@ export default function App() {
     
     setDividends(prev => prev.map(d => {
       if (d.id === id) {
-        targetDiv = { ...d, received: !d.received };
+        // If toggling a synced dividend, change its id so sync won't overwrite it
+        const newId = d.id.startsWith('div-sys-') ? `div-${Date.now()}` : d.id;
+        targetDiv = { ...d, id: newId, received: !d.received };
         return targetDiv;
       }
       return d;
     }));
 
     if (targetDiv) {
+      // Remove old key from IndexedDB if id changed
+      if (id !== targetDiv.id) {
+        await portafolioDB.deleteDividend(id);
+      }
       await portafolioDB.saveDividend(targetDiv);
     }
   };
@@ -957,16 +969,24 @@ export default function App() {
   };
 
   // Calculations
+  const todayStr = new Date().toISOString().split('T')[0];
   const portfolioValuation = holdings.reduce((sum, h) => sum + (h.shares * h.currentPrice), 0);
   const totalContributed = holdings.reduce((sum, h) => sum + (h.shares * h.buyPrice), 0);
   const totalDividends = dividends.filter(d => d.received).reduce((sum, d) => sum + d.totalAmount, 0);
   const totalTaxRefunds = refunds.reduce((sum, r) => sum + r.amount, 0);
   const dailyPnL = holdings.reduce((sum, h) => {
+    // Stocks bought today weren't in the portfolio at yesterday's close
+    if (h.buyDate && h.buyDate >= todayStr) return sum;
     const stock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(h.ticker));
-    if (stock && stock.changePercent != null && stock.price > 0) {
-      const pct = stock.changePercent / 100;
-      const changePerShare = stock.price * pct / (1 + pct);
-      return sum + (h.shares * changePerShare);
+    if (stock && stock.price > 0) {
+      if (stock.previousClose != null && stock.previousClose > 0) {
+        return sum + (h.shares * (stock.price - stock.previousClose));
+      }
+      if (stock.changePercent != null) {
+        const pct = stock.changePercent / 100;
+        const changePerShare = stock.price * pct / (1 + pct);
+        return sum + (h.shares * changePerShare);
+      }
     }
     return sum;
   }, 0);

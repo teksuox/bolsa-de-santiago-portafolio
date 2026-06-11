@@ -50,8 +50,8 @@ async function startServer() {
   let indicatorsCache: { data: any, timestamp: number } | null = null;
   const INDICATORS_CACHE_TTL = 60 * 60 * 1000;
 
-  // Helper function to fetch single stock data from Bolsa de Santiago API
-  async function fetchStockFromBCS(ticker: string): Promise<any> {
+  // Helper function to fetch single stock data from Yahoo Finance
+  async function fetchStockFromYahoo(ticker: string): Promise<any> {
     const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
     const now = Date.now();
 
@@ -60,94 +60,7 @@ async function startServer() {
       return stockCache[cleanTicker].data;
     }
 
-    const bcsHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': 'application/json',
-      'Origin': 'https://www.bolsadesantiago.com',
-      'Referer': 'https://www.bolsadesantiago.com/'
-    };
-
-    // Fetch historical daily data (gives us previous close + volume)
-    const histUrl = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointHistGAT?nemo=${cleanTicker}`;
-    const histResp = await fetch(histUrl, { headers: bcsHeaders });
-    if (!histResp.ok) throw new Error(`BCS hist returned ${histResp.status}`);
-    const histData: any = await histResp.json();
-    const histEntries: any[] = histData?.listaResult || [];
-
-    // Find last two non-zero closes for previousClose and volume
-    let todayClose: number | null = null;
-    let yesterdayClose: number | null = null;
-    let volumeCLP = 0;
-    for (let i = histEntries.length - 1; i >= 0; i--) {
-      const e = histEntries[i];
-      const close = parseFloat(String(e.CLOSE).replace(',', '.'));
-      const vol = parseInt(String(e.VOLUME).replace(/,/g, ''), 10);
-      if (close > 0 && todayClose === null) {
-        todayClose = close;
-        volumeCLP = vol || 0;
-        continue;
-      }
-      if (close > 0 && todayClose !== null && yesterdayClose === null) {
-        yesterdayClose = close;
-        break;
-      }
-    }
-
-    // If no valid data from hist, trigger Yahoo fallback
-    if (todayClose === null && yesterdayClose === null) {
-      throw new Error(`No price data from BCS for ${cleanTicker}`);
-    }
-
-    // Fetch intraday for current live price
-    let currentPrice = todayClose || 0;
-    const intraUrl = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointIntradayGAT?nemo=${cleanTicker}&frecuencia=1`;
-    try {
-      const intraResp = await fetch(intraUrl, { headers: bcsHeaders });
-      if (intraResp.ok) {
-        const intraData: any = await intraResp.json();
-        const intraEntries: any[] = intraData?.listaResult || [];
-        if (intraEntries.length > 0) {
-          const last = intraEntries[intraEntries.length - 1];
-          const lastPrice = parseFloat(String(last.pre_cie).replace(',', '.'));
-          if (lastPrice > 0) currentPrice = lastPrice;
-        }
-      }
-    } catch { /* intraday is optional, fallback to hist close */ }
-
-    const prevClose = yesterdayClose !== null ? yesterdayClose : currentPrice;
-    const changePercent = (prevClose > 0) ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
-
-    // Company name and sector from backup
-    let companyName = cleanTicker + " S.A.";
-    const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
-    if (backupItem) companyName = backupItem.name;
-    const dividendYield = backupItem ? backupItem.dividendYield : 6.0;
-    const sector = backupItem ? backupItem.sector : "Bolsa de Santiago";
-
-    const processedData = {
-      ticker: cleanTicker,
-      name: companyName,
-      price: Math.round(currentPrice * 100) / 100,
-      changePercent: Math.round(changePercent * 100) / 100,
-      previousClose: Math.round(prevClose * 100) / 100,
-      dividendYield: Math.round(dividendYield * 10) / 10,
-      sector,
-      volumeCLP: volumeCLP || 1500000
-    };
-
-    stockCache[cleanTicker] = { data: processedData, timestamp: now };
-    return processedData;
-  }
-
-  // Fallback Yahoo chart function (renamed from original fetchStockFromYahoo)
-  async function fetchStockFromYahooChart(ticker: string): Promise<any> {
-    const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
-    const now = Date.now();
-
-    if (stockCache[cleanTicker] && (now - stockCache[cleanTicker].timestamp < STOCK_CACHE_TTL)) {
-      return stockCache[cleanTicker].data;
-    }
-
+    // Determine possible Yahoo symbols
     const possibleSymbols: string[] = [];
     const aliasTicker = YAHOO_TICKER_ALIASES[cleanTicker];
     if (cleanTicker.startsWith('^')) {
@@ -155,6 +68,7 @@ async function startServer() {
     } else {
       possibleSymbols.push(`${cleanTicker}.SN`);
       possibleSymbols.push(cleanTicker);
+      // Try alias if exists (e.g. CENCOSHOP → CENCOMALLS)
       if (aliasTicker) {
         possibleSymbols.push(`${aliasTicker}.SN`);
         possibleSymbols.push(aliasTicker);
@@ -165,6 +79,7 @@ async function startServer() {
     let usedSymbol = '';
     let lastError = '';
 
+    // Try each symbol variation
     for (const symbol of possibleSymbols) {
       const urls = [
         `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y&events=div`,
@@ -193,17 +108,23 @@ async function startServer() {
       if (chartData) break;
     }
 
+    // If all fetches failed, fall back
     if (!chartData) {
       if (stockCache[cleanTicker]) {
-        console.warn(`[Yahoo] Fetch failed for ${cleanTicker} (${lastError}), returning expired cache.`);
+        console.warn(`[Yahoo API] Fetch failed for ${cleanTicker} (${lastError}), returning expired cache.`);
         return stockCache[cleanTicker].data;
       }
       const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
-      console.warn(`[Yahoo] Fetch failed for ${cleanTicker} (${lastError}), using backup.`);
+      console.warn(`[Yahoo API] Fetch failed for ${cleanTicker} (${lastError}), using backup data.`);
       if (backupItem) return backupItem;
       return {
-        ticker: cleanTicker, name: `${cleanTicker} S.A.`, price: 1500.0,
-        changePercent: 0.0, dividendYield: 5.5, sector: "Bolsa de Santiago", volumeCLP: 1200000000
+        ticker: cleanTicker,
+        name: `${cleanTicker} S.A.`,
+        price: 1500.0,
+        changePercent: 0.0,
+        dividendYield: 5.5,
+        sector: "Bolsa de Santiago",
+        volumeCLP: 1200000000
       };
     }
 
@@ -214,54 +135,120 @@ async function startServer() {
         if (stockCache[cleanTicker]) return stockCache[cleanTicker].data;
         throw new Error(`Incomplete chart payload for ${cleanTicker}`);
       }
+
       const price = meta.regularMarketPrice || 150.0;
       const quotes = result.indicators?.quote?.[0];
       const closes = quotes?.close || [];
-      let todayClose = null, yesterdayClose = null;
+
+      // Find last two non-null closes for change % calculation
+      let todayClose = null;
+      let yesterdayClose = null;
       for (let i = closes.length - 1; i >= 0; i--) {
-        if (closes[i] !== null && todayClose === null) { todayClose = closes[i]; continue; }
-        if (closes[i] !== null && todayClose !== null && yesterdayClose === null) { yesterdayClose = closes[i]; break; }
+        if (closes[i] !== null && todayClose === null) {
+          todayClose = closes[i];
+          continue;
+        }
+        if (closes[i] !== null && todayClose !== null && yesterdayClose === null) {
+          yesterdayClose = closes[i];
+          break;
+        }
       }
+
       const previousClose = yesterdayClose !== null ? yesterdayClose : price;
       const changePercent = (previousClose > 0) ? ((price - previousClose) / previousClose) * 100 : 0;
+
+      // Log for debugging
+      console.log(`[${cleanTicker}] price=${price}, todayClose=${todayClose}, yesterdayClose=${yesterdayClose}, chartPrevClose=${meta.chartPreviousClose}, prevClose=${meta.previousClose}, changePercent=${changePercent}`);
+
       const volumes = quotes?.volume || [];
       let volumeCLP = 0;
-      for (let i = volumes.length - 1; i >= 0; i--) { if (volumes[i] !== null) { volumeCLP = volumes[i]; break; } }
+      for (let i = volumes.length - 1; i >= 0; i--) {
+        if (volumes[i] !== null && volumes[i] !== undefined) {
+          volumeCLP = volumes[i];
+          break;
+        }
+      }
       if (!volumeCLP) volumeCLP = 1500000;
-      const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
+
+      const nowUnix = Math.floor(now / 1000);
+      const oneYearAgoUnix = nowUnix - (365 * 24 * 60 * 60);
+      const dividends = result.events?.dividends;
+      let ttmDividendsSum = 0;
+
+      if (dividends && typeof dividends === 'object') {
+        Object.values(dividends).forEach((d: any) => {
+          if (d.date >= oneYearAgoUnix && d.date <= nowUnix) {
+            ttmDividendsSum += Number(d.amount);
+          }
+        });
+      }
+
+      let dividendYield = 0;
+      if (price > 0) {
+        dividendYield = (ttmDividendsSum / price) * 100;
+      }
+
+      if (dividendYield === 0 && meta.dividendYield) {
+        dividendYield = meta.dividendYield;
+      } else if (dividendYield === 0) {
+        const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
+        dividendYield = backupItem ? backupItem.dividendYield : 6.0;
+      }
+
       let companyName = cleanTicker + " S.A.";
-      if (backupItem) companyName = backupItem.name;
+      const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
+      if (backupItem) {
+        companyName = backupItem.name;
+      }
+
+      try {
+        const searchUrl = `https://query1.finance.yahoo.com/v1/finance/search?q=${usedSymbol}&quotesCount=1`;
+        const searchRes = await fetch(searchUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          }
+        });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          const qResult = searchData?.quotes?.[0];
+          if (qResult) {
+            companyName = qResult.longname || qResult.shortname || qResult.name || companyName;
+          }
+        }
+      } catch (searchErr) {
+        console.warn(`Could not lookup company name for ${cleanTicker}, using fallback.`);
+      }
+
       const processedData = {
-        ticker: cleanTicker, name: companyName, price: Math.round(price * 100) / 100,
+        ticker: cleanTicker,
+        name: companyName,
+        price: Math.round(price * 100) / 100,
         changePercent: Math.round(changePercent * 100) / 100,
         previousClose: Math.round(previousClose * 100) / 100,
-        dividendYield: backupItem ? backupItem.dividendYield : 6.0,
+        dividendYield: Math.round(dividendYield * 10) / 10,
         sector: backupItem ? backupItem.sector : "Bolsa de Santiago",
         volumeCLP: Math.round(volumeCLP)
       };
-      stockCache[cleanTicker] = { data: processedData, timestamp: now };
+
+      stockCache[cleanTicker] = {
+        data: processedData,
+        timestamp: now
+      };
+
       return processedData;
     } catch (err: any) {
-      console.error(`[Yahoo] Error parsing ${cleanTicker}:`, err);
+      console.error(`[Yahoo API] Error parsing response for ${cleanTicker}:`, err);
       const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
-      return backupItem || { ticker: cleanTicker, name: `${cleanTicker} S.A.`, price: 1500.0,
-        changePercent: 0.0, previousClose: 1500.0, dividendYield: 6.0, sector: "Bolsa de Santiago", volumeCLP: 1000000000 };
-    }
-  }
-
-  // Main fetch function: BCS for Chilean stocks, Yahoo for special tickers (^IPSA, CLP=X)
-  async function fetchStockPrice(ticker: string): Promise<any> {
-    const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
-    // Special tickers → use Yahoo directly
-    if (cleanTicker.startsWith('^') || cleanTicker.includes('=X')) {
-      return fetchStockFromYahooChart(ticker);
-    }
-    // Chilean stock → try BCS first, fallback to Yahoo
-    try {
-      return await fetchStockFromBCS(ticker);
-    } catch (err) {
-      console.warn(`BCS failed for ${cleanTicker}, fallback to Yahoo:`, (err as Error).message);
-      return fetchStockFromYahooChart(ticker);
+      return backupItem || {
+        ticker: cleanTicker,
+        name: `${cleanTicker} S.A.`,
+        price: 1500.0,
+        changePercent: 0.0,
+        previousClose: 1500.0,
+        dividendYield: 6.0,
+        sector: "Bolsa de Santiago",
+        volumeCLP: 1000000000
+      };
     }
   }
 
@@ -291,40 +278,49 @@ async function startServer() {
       }
       const tickers = tickersParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
 
-      const bcsHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-        'Origin': 'https://www.bolsadesantiago.com',
-        'Referer': 'https://www.bolsadesantiago.com/'
-      };
-
       const results = await Promise.all(tickers.map(async (ticker) => {
         const cleanTicker = ticker.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        try {
-          const url = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointHistGAT?nemo=${cleanTicker}`;
-          const response = await fetch(url, { headers: bcsHeaders });
-          if (!response.ok) {
-            return { ticker: cleanTicker, history: [] };
-          }
-          const data: any = await response.json();
-          const entries: any[] = data?.listaResult || [];
+        const aliasTicker = YAHOO_TICKER_ALIASES[cleanTicker];
+        const possibleSymbols = aliasTicker
+          ? [`${aliasTicker}.SN`, aliasTicker, `${cleanTicker}.SN`, cleanTicker]
+          : [`${cleanTicker}.SN`, cleanTicker];
 
-          const history: { date: string; close: number }[] = [];
-          for (const entry of entries) {
-            const close = parseFloat(String(entry.CLOSE).replace(',', '.'));
-            const rawDate = String(entry.DATE || '');
-            // BCS date format: "YYYY-MM-DD"
-            if (close > 0 && rawDate.length >= 10) {
-              history.push({
-                date: rawDate.slice(0, 10),
-                close: Math.round(close * 100) / 100
-              });
+        let chartData: any = null;
+        for (const symbol of possibleSymbols) {
+          try {
+            const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
+            const response = await fetch(url, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json'
+              }
+            });
+            if (response.ok) {
+              chartData = await response.json();
+              break;
             }
-          }
-          return { ticker: cleanTicker, history };
-        } catch {
+          } catch { /* try next */ }
+        }
+
+        if (!chartData?.chart?.result?.[0]) {
           return { ticker: cleanTicker, history: [] };
         }
+
+        const result = chartData.chart.result[0];
+        const timestamps: number[] = result.timestamp || [];
+        const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
+
+        const history: { date: string; close: number }[] = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (closes[i] != null) {
+            history.push({
+              date: new Date(timestamps[i] * 1000).toISOString().split('T')[0],
+              close: Math.round(closes[i]! * 100) / 100
+            });
+          }
+        }
+
+        return { ticker: cleanTicker, history };
       }));
 
       res.json(results);
@@ -351,7 +347,7 @@ async function startServer() {
       // Fetch details of all tickers concurrently from the crumb-free chart endpoint
       const quotes = await Promise.all(allTickers.map(async (t) => {
         try {
-          return await fetchStockPrice(t);
+          return await fetchStockFromYahoo(t);
         } catch (err) {
           console.warn(`Failed fetching ${t}, serving loaded backup:`);
           return INITIAL_MARKET_STOCKS_BACKUP.find(item => item.ticker === t) || {
@@ -388,7 +384,7 @@ async function startServer() {
       }
 
       // Fetch quote and dividend stats (cached undergetStockQuote)
-      const data = await fetchStockPrice(cleanTicker);
+      const data = await fetchStockFromYahoo(cleanTicker);
       res.json(data);
     } catch (err: any) {
       console.error(`Error in search-stock dynamic API for ${req.query.ticker}:`, err?.message || err);
@@ -447,7 +443,7 @@ async function startServer() {
 
     // 2. Fetch live S&P/CLX IPSA from Yahoo (with ^IPSA ticker of Bolsa de Santiago)
     try {
-      const ipsaData = await fetchStockPrice("^IPSA");
+      const ipsaData = await fetchStockFromYahoo("^IPSA");
       if (ipsaData && ipsaData.price && ipsaData.price > 1000) {
         ipsaVal = ipsaData.price;
         ipsaChangeVal = ipsaData.changePercent;
@@ -459,7 +455,7 @@ async function startServer() {
 
     // 3. Fetch live USD/CLP (CLP=X) from Yahoo to see if we can get real-time currency ticker
     try {
-      const usdData = await fetchStockPrice("CLP=X");
+      const usdData = await fetchStockFromYahoo("CLP=X");
       if (usdData && usdData.price && usdData.price > 700 && usdData.price < 1150) {
         // Only override if we don't have a reliable mindicador value or to keep it close to SII
         usdVal = usdData.price;
