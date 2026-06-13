@@ -3,6 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY}
     image: portafolio-bolsa-app:latest
     container_name: portafolio-bolsa-app
     ports:
@@ -10,32 +13,4 @@ services:
     environment:
       - PORT=${PORT:-3002}
       - NODE_ENV=production
-      - POCKETBASE_URL=http://pocketbase:8090
-      - POCKETBASE_PUBLIC_URL=${POCKETBASE_PUBLIC_URL:-}
-      - PB_EXTERNAL_PORT=8091
-    depends_on:
-      - pocketbase
     restart: unless-stopped
-    networks:
-      - portafolio-net
-
-  pocketbase:
-    build:
-      context: .
-      dockerfile: Dockerfile.pocketbase
-    image: portafolio-bolsa-pocketbase:latest
-    container_name: portafolio-bolsa-pocketbase
-    ports:
-      - "8091:8090"
-    volumes:
-      - pocketbase_data:/pb_data
-    restart: unless-stopped
-    networks:
-      - portafolio-net
-
-networks:
-  portafolio-net:
-    driver: bridge
-
-volumes:
-  pocketbase_data:

@@ -5,6 +5,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { TrendingUp, DollarSign, Wallet, Calendar, FileCheck, Landmark, Briefcase, Cloud } from 'lucide-react';
+import { isMarketOpen } from '../utils';
+
+const MANUAL_COOLDOWN = 120_000; // 2 min
 
 interface HeaderProps {
   activeTab: string;
@@ -12,6 +15,7 @@ interface HeaderProps {
   portfolioValue: number;
   onRefreshMarketData?: () => void;
   isRefreshing?: boolean;
+  lastRefreshed?: Date;
 }
 
 export default function Header({ 
@@ -19,8 +23,23 @@ export default function Header({
   setActiveTab, 
   portfolioValue,
   onRefreshMarketData,
-  isRefreshing = false
+  isRefreshing = false,
+  lastRefreshed
 }: HeaderProps) {
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+
+  useEffect(() => {
+    if (!lastRefreshed) return;
+    const tick = () => {
+      const elapsed = Date.now() - lastRefreshed.getTime();
+      setCooldownLeft(Math.max(0, MANUAL_COOLDOWN - elapsed));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastRefreshed]);
+
+  const canRefresh = cooldownLeft <= 0 && !isRefreshing;
   // Live values of official indices according to official SII
   const [usdClp, setUsdClp] = useState(894.99);
   const [usdChange, setUsdChange] = useState(-0.05);
@@ -59,6 +78,7 @@ export default function Header({
   const navItems = [
     { id: 'dashboard', label: 'Resumen & Gráficos', icon: TrendingUp },
     { id: 'portfolio', label: 'Mi Portafolio', icon: Briefcase },
+    { id: 'history', label: 'Historial', icon: TrendingUp },
     { id: 'dividends', label: 'Calendario Dividendos', icon: Calendar },
     { id: 'taxes', label: 'Operación Renta', icon: FileCheck },
     { id: 'market', label: 'Bolsa de Santiago (IPSA)', icon: Landmark },
@@ -87,24 +107,26 @@ export default function Header({
 
           <div className="text-slate-400 flex items-center space-x-3">
             <div className="flex items-center space-x-2 shrink-0">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-              <span>Mercado Abierto</span>
+              <span className={`w-1.5 h-1.5 rounded-full inline-block ${isMarketOpen() ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
+              <span>{isMarketOpen() ? 'Mercado Abierto' : 'Mercado Cerrado'}</span>
             </div>
             {onRefreshMarketData && (
               <button
                 type="button"
                 onClick={onRefreshMarketData}
-                disabled={isRefreshing}
-                className="text-[10px] bg-teal-500 hover:bg-teal-400 hover:text-slate-950 text-slate-950 font-bold border border-teal-500 rounded-md px-2.5 py-0.5 transition flex items-center gap-1 uppercase disabled:opacity-50 cursor-pointer"
-                title="Actualizar Precios de Acciones en Vivo"
+                disabled={!canRefresh}
+                className="text-[10px] bg-teal-500 hover:bg-teal-400 hover:text-slate-950 text-slate-950 font-bold border border-teal-500 rounded-md px-2.5 py-0.5 transition flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                title={canRefresh ? 'Actualizar Precios de Acciones en Vivo' : `Espere ${Math.ceil(cooldownLeft / 1000)}s`}
               >
                 {isRefreshing ? (
                   <>
                     <span className="w-1.5 h-1.5 border border-slate-950 border-t-transparent rounded-full animate-spin"></span>
                     <span>...</span>
                   </>
-                ) : (
+                ) : canRefresh ? (
                   <span>Actualizar Precio</span>
+                ) : (
+                  <span>{Math.ceil(cooldownLeft / 1000)}s</span>
                 )}
               </button>
             )}

@@ -1,10 +1,29 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 
 type SortDir = 'asc' | 'desc';
 
-export function useSortable<T>(data: T[], defaultKey?: string) {
-  const [sortKey, setSortKey] = useState<string>(defaultKey || '');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+function loadPersisted(key: string): { k: string; d: SortDir } | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.k === 'string' && (parsed.d === 'asc' || parsed.d === 'desc')) return parsed;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function persist(key: string, k: string, d: SortDir) {
+  try { localStorage.setItem(key, JSON.stringify({ k, d })); } catch { /* ignore */ }
+}
+
+export function useSortable<T>(data: T[], defaultKey?: string, storageKey?: string) {
+  const persisted = storageKey ? loadPersisted(storageKey) : null;
+  const [sortKey, setSortKey] = useState<string>(persisted?.k ?? defaultKey ?? '');
+  const [sortDir, setSortDir] = useState<SortDir>(persisted?.d ?? 'asc');
+
+  useEffect(() => {
+    if (storageKey) persist(storageKey, sortKey, sortDir);
+  }, [sortKey, sortDir, storageKey]);
 
   const toggleSort = (key: string) => {
     if (sortKey === key) {

@@ -5,5 +5,3 @@ coverage/
 .DS_Store
 *.log
 .env*
-!.env.example
-pocketbase_data/

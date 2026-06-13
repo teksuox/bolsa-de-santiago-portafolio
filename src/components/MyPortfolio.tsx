@@ -5,8 +5,8 @@
 
 import React, { useState } from 'react';
 import { StockHolding } from '../types';
-import { formatCLP, formatPercent, formatDateChilean } from '../utils';
-import { PlusCircle, Trash2, Edit2, Check, X, RefreshCw, Landmark, HelpCircle, Flame, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { formatCLP, formatPercent, formatDateChilean, normalizeTicker } from '../utils';
+import { PlusCircle, Trash2, Edit2, Check, X, RefreshCw, Landmark, HelpCircle, Flame, ArrowUpRight, ArrowDownRight, Lock } from 'lucide-react';
 
 import { useSortable } from '../lib/useSortable';
 
@@ -16,7 +16,8 @@ interface MyPortfolioProps {
   onUpdateHoldingPrice: (id: string, newPrice: number) => void;
   onUpdateHoldingYield: (id: string, newYield: number) => void;
   onDeleteHolding: (id: string) => void;
-  marketStocks: { ticker: string; name: string; price: number; dividendYield: number }[];
+  onResetManualPrice?: (id: string) => void;
+  marketStocks: { ticker: string; name: string; price: number; previousClose?: number; changePercent?: number; dividendYield: number }[];
   dailyPnL: number;
 }
 
@@ -26,6 +27,7 @@ export default function MyPortfolio({
   onUpdateHoldingPrice,
   onUpdateHoldingYield,
   onDeleteHolding,
+  onResetManualPrice,
   marketStocks,
   dailyPnL
 }: MyPortfolioProps) {
@@ -190,6 +192,7 @@ export default function MyPortfolio({
       buyDate: string;
       annualTargetYield: number;
       ids: string[];
+      manualPrice: boolean;
     }>();
 
     for (const h of holdings) {
@@ -205,6 +208,7 @@ export default function MyPortfolio({
         // Keep earliest buyDate
         if (h.buyDate < existing.buyDate) existing.buyDate = h.buyDate;
         existing.ids.push(h.id);
+        if (h.manualPrice) existing.manualPrice = true;
       } else {
         map.set(h.ticker, {
           ticker: h.ticker,
@@ -214,20 +218,22 @@ export default function MyPortfolio({
           currentPrice: h.currentPrice,
           buyDate: h.buyDate,
           annualTargetYield: h.annualTargetYield,
-          ids: [h.id]
+          ids: [h.id],
+          manualPrice: h.manualPrice || false
         });
       }
     }
     return Array.from(map.values());
   }, [holdings]);
 
-  const { sortedData: sortedGrouped, sortKey: pfSortKey, toggleSort: pfToggleSort, getSortIcon: pfIcon } = useSortable(groupedHoldings, '');
+  const { sortedData: sortedGrouped, sortKey: pfSortKey, toggleSort: pfToggleSort, getSortIcon: pfIcon } = useSortable(groupedHoldings, 'ticker', 'sort_portfolio');
 
   // Capital aggregation (use grouped data for accurate totals)
   const totalContributed = groupedHoldings.reduce((sum, h) => sum + (h.shares * h.buyPrice), 0);
   const totalCurrent = groupedHoldings.reduce((sum, h) => sum + (h.shares * h.currentPrice), 0);
   const totalGainLoss = totalCurrent - totalContributed;
   const totalGainLossPercent = totalContributed > 0 ? (totalGainLoss / totalContributed) * 100 : 0;
+  const todayStr = new Date().toISOString().split('T')[0];
 
   return (
     <div className="space-y-6">
@@ -437,7 +443,8 @@ export default function MyPortfolio({
                   </th>
                   <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('buyPrice')}>Costo Total{pfIcon('buyPrice')}</th>
                   <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('currentPrice')}>Valor actual{pfIcon('currentPrice')}</th>
-                  <th className="py-3 px-4 text-right">Rentabilidad (%)</th>
+                  <th className="py-3 px-4 text-right">Cambio Diario</th>
+                  <th className="py-3 px-4 text-right">RENTABILIDAD TOTAL</th>
                   <th className="py-3 px-4 text-right">% Port.</th>
                   <th className="py-3 px-4 text-center cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('annualTargetYield')}>Rend. Objetivo{pfIcon('annualTargetYield')}</th>
                   <th className="py-3 px-4 text-center"></th>
@@ -516,9 +523,22 @@ export default function MyPortfolio({
                         ) : (
                           <div className="flex items-center justify-end space-x-1 group">
                             <span className="text-slate-900 font-medium">{formatCLP(h.currentPrice, true)}</span>
+                            {(h as any).manualPrice && (
+                              <span className="relative group/lock" title="Precio manual - click para desbloquear">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); if (onResetManualPrice) h.ids?.forEach((id: string) => onResetManualPrice!(id)); }}
+                                  className="text-amber-500 hover:text-amber-600 transition"
+                                >
+                                  <Lock className="w-3 h-3" />
+                                </button>
+                                <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] px-2 py-0.5 rounded whitespace-nowrap opacity-0 group-hover/lock:opacity-100 transition pointer-events-none">
+                                  Desbloquear
+                                </span>
+                              </span>
+                            )}
                             <button
                               onClick={(e) => { e.stopPropagation(); startEditPrice(h); }}
-                              className="text-slate-400 hover:text-teal-500 opacity-0 group-hover:opacity-100 transition"
+                              className="text-slate-400 hover:text-teal-500 transition"
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
@@ -536,7 +556,34 @@ export default function MyPortfolio({
                         {formatCLP(currentVal)}
                       </td>
 
-                      {/* Rendimiento */}
+                      {/* Cambio Diario */}
+                      <td className="py-4 px-4 text-right">
+                        {(() => {
+                          const mStock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(h.ticker));
+                          if (h.buyDate && h.buyDate >= todayStr) {
+                            return <span className="text-slate-300 font-mono">—</span>;
+                          }
+                          const prevClose = mStock?.previousClose;
+                          const currentPrice = mStock?.price;
+                          if (prevClose == null || prevClose <= 0 || currentPrice == null) {
+                            return <span className="text-slate-300 font-mono">—</span>;
+                          }
+                          const dailyProfit = (currentPrice - prevClose) * h.shares;
+                          const dailyPct = ((currentPrice - prevClose) / prevClose) * 100;
+                          return (
+                            <div>
+                              <div className={`font-semibold font-mono ${dailyProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {dailyProfit >= 0 ? '+' : ''}{dailyPct.toFixed(2)}%
+                              </div>
+                              <div className={`text-[10px] font-mono ${dailyProfit >= 0 ? 'text-emerald-500' : 'text-rose-400'}`}>
+                                {dailyProfit >= 0 ? '+' : ''}{formatCLP(dailyProfit)}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </td>
+
+                      {/* RENTABILIDAD TOTAL */}
                       <td className="py-4 px-4 text-right">
                         <div className={`font-semibold font-mono ${absProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {absProfit >= 0 ? '+' : ''}{relativeProfit.toFixed(2)}%
@@ -631,6 +678,26 @@ export default function MyPortfolio({
                         <td className="py-2.5 px-4 text-right font-mono text-slate-600">{formatCLP(indCost)}</td>
                         <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCLP(indCurrentVal)}</td>
                         <td className="py-2.5 px-4 text-right">
+                          {(() => {
+                            if (holding.buyDate && holding.buyDate >= todayStr) {
+                              return <span className="text-slate-300 font-mono">—</span>;
+                            }
+                            const mStock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(holding.ticker));
+                            const prevClose = mStock?.previousClose;
+                            const currentPrice = mStock?.price;
+                            if (prevClose == null || prevClose <= 0 || currentPrice == null) {
+                              return <span className="text-slate-300 font-mono">—</span>;
+                            }
+                            const dailyProfit = (currentPrice - prevClose) * holding.shares;
+                            const dailyPct = ((currentPrice - prevClose) / prevClose) * 100;
+                            return (
+                              <span className={`font-mono font-semibold ${dailyProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                {dailyProfit >= 0 ? '+' : ''}{dailyPct.toFixed(2)}%
+                              </span>
+                            );
+                          })()}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
                           <span className={`font-mono font-semibold ${indAbsProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             {indAbsProfit >= 0 ? '+' : ''}{indRelProfit.toFixed(2)}%
                           </span>
@@ -638,7 +705,6 @@ export default function MyPortfolio({
                             {indAbsProfit >= 0 ? '+' : ''}{formatCLP(indAbsProfit)}
                           </div>
                         </td>
-                        <td className="py-2.5 px-4 text-right"></td>
                         <td className="py-2.5 px-4 text-center"></td>
                         <td className="py-2.5 px-4 text-center">
                           <button

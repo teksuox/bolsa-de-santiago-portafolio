@@ -112,11 +112,33 @@ export default function ChartsAndAnalytics({
       </div>
 
       {/* Row 1: Yield % + Donut Chart side by side */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-5">
+        {/* Capital Neto */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-center">
+          <span className="text-xs text-slate-400 block">Capital Neto</span>
+          <span className="text-2xl font-extrabold font-mono text-slate-900 block mt-1">
+            {formatCLP(computedContributed)}
+          </span>
+          <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+            Total aportado en la compra de acciones.
+          </p>
+        </div>
+
+        {/* Valorización de Mercado */}
+        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-center">
+          <span className="text-xs text-slate-400 block">Valorización de Mercado</span>
+          <span className="text-2xl font-extrabold font-mono text-indigo-600 block mt-1">
+            {formatCLP(computedCurrentValue)}
+          </span>
+          <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+            Capital neto más ganancias/pérdidas totales.
+          </p>
+        </div>
+
         {/* Yield Card */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-center">
           <span className="text-xs text-slate-400 block">Tasa de Dividendos + Devolución Generada</span>
-          <span className="text-4xl font-extrabold font-mono text-emerald-600 block mt-1">
+          <span className="text-2xl font-extrabold font-mono text-emerald-600 block mt-1">
             {generatedYieldPercent.toFixed(2)}%
           </span>
           <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
@@ -127,15 +149,13 @@ export default function ChartsAndAnalytics({
         {/* Daily P&L */}
         <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-center">
           <span className="text-xs text-slate-400 block">Ganancia / Pérdida del Día</span>
-          <div className="flex items-baseline gap-2 mt-1">
-            <span className={`text-4xl font-extrabold font-mono block ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-              {dailyPnL >= 0 ? '+' : ''}{formatCLP(dailyPnL)}
-            </span>
-            <span className={`text-sm font-semibold font-mono ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <span className={`text-2xl font-extrabold font-mono block mt-1 ${dailyPnL >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            {dailyPnL >= 0 ? '+' : ''}{formatCLP(dailyPnL)}{' '}
+            <span className="text-sm font-semibold">
               ({dailyPnL >= 0 ? '+' : ''}
               {computedCurrentValue > 0 ? ((dailyPnL / (computedCurrentValue - dailyPnL)) * 100).toFixed(2) : '0.00'}%)
             </span>
-          </div>
+          </span>
           <p className="text-[11px] text-slate-500 leading-relaxed mt-2">Hoy</p>
         </div>
 
@@ -190,12 +210,12 @@ export default function ChartsAndAnalytics({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-rose-50 border border-rose-100/50 p-4 rounded-xl">
           <span className="text-[10px] text-rose-500 uppercase font-bold tracking-wider block">Minusvalía Total</span>
-          <span className="text-lg font-bold text-rose-700 font-mono block mt-0.5">-{formatCLP(totalLosses)}</span>
+          <span className="text-lg font-bold text-rose-700 font-mono block mt-0.5">-{formatCLP(totalLosses)} <span className="text-xs font-medium text-rose-500">(-{((totalLosses / (computedContributed || 1)) * 100).toFixed(2)}%)</span></span>
           <span className="text-[10px] text-rose-400 font-medium font-mono">{holdingsWithLosses.length} {holdingsWithLosses.length === 1 ? 'activa' : 'activas'}</span>
         </div>
         <div className="bg-emerald-50 border border-emerald-100/50 p-4 rounded-xl">
           <span className="text-[10px] text-emerald-500 uppercase font-bold tracking-wider block">Plusvalía Total</span>
-          <span className="text-lg font-bold text-emerald-700 font-mono block mt-0.5">+{formatCLP(totalGains)}</span>
+          <span className="text-lg font-bold text-emerald-700 font-mono block mt-0.5">+{formatCLP(totalGains)} <span className="text-xs font-medium text-emerald-500">(+{((totalGains / (computedContributed || 1)) * 100).toFixed(2)}%)</span></span>
           <span className="text-[10px] text-emerald-400 font-medium font-mono">{holdingsWithGains.length} {holdingsWithGains.length === 1 ? 'activa' : 'activas'}</span>
         </div>
         <div className={`p-4 rounded-xl border ${isNetGain ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>

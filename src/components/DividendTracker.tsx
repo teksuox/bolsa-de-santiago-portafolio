@@ -196,8 +196,12 @@ export default function DividendTracker({
     calendarCells.push(d);
   }
 
-  // Sort list chronological (incoming or past)
-  const sortedDividends = [...dividends].sort((a, b) => new Date(b.payoutDate).getTime() - new Date(a.payoutDate).getTime());
+  const sortedDividends = [...dividends].sort((a, b) => {
+    const aReal = !a.id.startsWith('div-sys-') ? 1 : 0;
+    const bReal = !b.id.startsWith('div-sys-') ? 1 : 0;
+    if (aReal !== bReal) return bReal - aReal;
+    return new Date(a.payoutDate).getTime() - new Date(b.payoutDate).getTime();
+  });
 
   // Group dividends by ticker for cascade view
   const [expandedTickers, setExpandedTickers] = useState<Set<string>>(new Set());
@@ -226,6 +230,7 @@ export default function DividendTracker({
   } = useSortable(
     groupedDividends.map(([ticker, divs]) => ({ ticker, divs, firstDiv: divs[0] })),
     '',
+    'sort_dividends',
   );
 
   return (
@@ -343,8 +348,10 @@ export default function DividendTracker({
                     className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white focus:outline-none"
                   >
                     {holdings.length > 0 ? (
-                      holdings.map(h => (
-                        <option key={h.id} value={h.ticker}>{h.ticker} ({h.name})</option>
+                      Array.from(
+                        new Map(holdings.map(h => [h.ticker, h])).values()
+                      ).map(h => (
+                        <option key={h.ticker} value={h.ticker}>{h.ticker} ({h.name})</option>
                       ))
                     ) : (
                       <option value="CHILE">CHILE (Debe agregar acciones en portafolio)</option>
@@ -367,18 +374,6 @@ export default function DividendTracker({
                   />
                 </div>
 
-                {/* Payout Date */}
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Fecha de Entrega/Pago</label>
-                  <input
-                    type="date"
-                    required
-                    value={payoutDate}
-                    onChange={(e) => setPayoutDate(e.target.value)}
-                    className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
-                  />
-                </div>
-
                 {/* Cutoff Date */}
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1 group relative cursor-help">
@@ -391,6 +386,18 @@ export default function DividendTracker({
                     type="date"
                     value={cutoffDate}
                     onChange={(e) => setCutoffDate(e.target.value)}
+                    className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
+                  />
+                </div>
+
+                {/* Payout Date */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Fecha de Entrega/Pago</label>
+                  <input
+                    type="date"
+                    required
+                    value={payoutDate}
+                    onChange={(e) => setPayoutDate(e.target.value)}
                     className="w-full text-xs border border-slate-200 rounded-lg p-2.5 bg-white"
                   />
                 </div>
@@ -448,12 +455,12 @@ export default function DividendTracker({
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/70 font-semibold text-slate-500 uppercase tracking-wider">
-                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.ticker')}>Nemotécnico{divIcon('firstDiv.ticker')}</th>
-                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.sharesCount')}>Cant. Acciones{divIcon('firstDiv.sharesCount')}</th>
-                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.amountPerShare')}>Reparto (por Acción){divIcon('firstDiv.amountPerShare')}</th>
-                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.totalAmount')}>Monto Total{divIcon('firstDiv.totalAmount')}</th>
-                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.payDate')}>Día de Entrega{divIcon('firstDiv.payDate')}</th>
-                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none" onClick={() => divToggleSort('firstDiv.limitDate')}>Fecha Límite Compra{divIcon('firstDiv.limitDate')}</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.ticker')}>Nemotécnico{divIcon('firstDiv.ticker')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.sharesCount')}>Cant. Acciones{divIcon('firstDiv.sharesCount')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.amountPerShare')}>Reparto (por Acción){divIcon('firstDiv.amountPerShare')}</th>
+                    <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.totalAmount')}>Monto Total{divIcon('firstDiv.totalAmount')}</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.limitDate')}>Fecha Límite Compra{divIcon('firstDiv.limitDate')}</th>
+                    <th className="py-3 px-4 cursor-pointer hover:text-slate-800 select-none whitespace-nowrap" onClick={() => divToggleSort('firstDiv.payDate')}>Día de Entrega{divIcon('firstDiv.payDate')}</th>
                     <th className="py-3 px-4 text-center">Estado</th>
                     <th className="py-3 px-4 text-center"></th>
                   </tr>
@@ -508,19 +515,6 @@ export default function DividendTracker({
                             {formatCLP(isEditing ? ((Number(editAmountPerShare) || 0) * div.sharesCount) : div.totalAmount)}
                           </td>
 
-                          <td className="py-4 px-4 font-medium text-slate-600">
-                            {isEditing ? (
-                              <input
-                                type="date"
-                                value={editPayoutDate}
-                                onChange={(e) => setEditPayoutDate(e.target.value)}
-                                className="w-28 text-xs border border-slate-200 rounded p-1"
-                              />
-                            ) : (
-                              formatDateChilean(div.payoutDate)
-                            )}
-                          </td>
-
                           <td className="py-4 px-4">
                             {isEditing ? (
                               <input
@@ -538,6 +532,19 @@ export default function DividendTracker({
                               </div>
                             ) : (
                               <span className="text-slate-300 text-[10px]">—</span>
+                            )}
+                          </td>
+
+                          <td className="py-4 px-4 font-medium text-slate-600">
+                            {isEditing ? (
+                              <input
+                                type="date"
+                                value={editPayoutDate}
+                                onChange={(e) => setEditPayoutDate(e.target.value)}
+                                className="w-28 text-xs border border-slate-200 rounded p-1"
+                              />
+                            ) : (
+                              formatDateChilean(div.payoutDate)
                             )}
                           </td>
 

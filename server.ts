@@ -19,16 +19,16 @@ const FALLBACK_UF = 40763.26;
 const FALLBACK_UTM = 66224.00;
 
 const INITIAL_MARKET_STOCKS_BACKUP = [
-  { ticker: "CHILE", name: "Banco de Chile", price: 175.90, changePercent: 5.33, dividendYield: 8.4, sector: "Financiero", volumeCLP: 175295736 },
-  { ticker: "SQM-B", name: "Sociedad Química y Minera (SQM)", price: 41250.00, changePercent: -1.42, dividendYield: 10.2, sector: "Minero & Químico", volumeCLP: 3450000000 },
-  { ticker: "ENELCHILE", name: "Enel Chile S.A.", price: 76.00, changePercent: 2.43, dividendYield: 9.1, sector: "Servicios Públicos", volumeCLP: 980000000 },
-  { ticker: "CENCOSHOP", name: "Cencosud Shopping S.A.", price: 2323.00, changePercent: 0.28, dividendYield: 7.2, sector: "Inmobiliario Comercial", volumeCLP: 1200000000 },
-  { ticker: "COPEC", name: "Empresas Copec S.A.", price: 6119.50, changePercent: 2.33, dividendYield: 5.8, sector: "Energía & Recursos", volumeCLP: 1540000000 },
-  { ticker: "VAPORES", name: "Cía. Sudamericana de Vapores", price: 43.00, changePercent: 1.32, dividendYield: 13.8, sector: "Transporte Marítimo", volumeCLP: 2100000000 },
-  { ticker: "BSANTANDER", name: "Banco Santander Chile", price: 72.10, changePercent: 5.26, dividendYield: 8.1, sector: "Financiero", volumeCLP: 1150000000 },
-  { ticker: "CMPC", name: "Empresas CMPC S.A.", price: 1910.00, changePercent: -0.55, dividendYield: 6.2, sector: "Forestal & Celulosa", volumeCLP: 950000000 },
-  { ticker: "FALABELLA", name: "Falabella S.A.", price: 5740.00, changePercent: 2.87, dividendYield: 3.2, sector: "Retail", volumeCLP: 1680000000 },
-  { ticker: "ANDINA-B", name: "Embotelladora Andina S.A.", price: 2520.00, changePercent: 0.30, dividendYield: 6.9, sector: "Consumo Masivo", volumeCLP: 510000000 }
+  { ticker: "CHILE", name: "Banco de Chile", price: 175.90, changePercent: 5.33, previousClose: 167.00, dividendYield: 8.4, sector: "Financiero", volumeCLP: 175295736 },
+  { ticker: "SQM-B", name: "Sociedad Química y Minera (SQM)", price: 41250.00, changePercent: -1.42, previousClose: 41844.39, dividendYield: 10.2, sector: "Minero & Químico", volumeCLP: 3450000000 },
+  { ticker: "ENELCHILE", name: "Enel Chile S.A.", price: 76.00, changePercent: 2.43, previousClose: 74.20, dividendYield: 9.1, sector: "Servicios Públicos", volumeCLP: 980000000 },
+  { ticker: "CENCOSHOP", name: "Cencosud Shopping S.A.", price: 2323.00, changePercent: 0.28, previousClose: 2316.51, dividendYield: 7.2, sector: "Inmobiliario Comercial", volumeCLP: 1200000000 },
+  { ticker: "COPEC", name: "Empresas Copec S.A.", price: 6119.50, changePercent: 2.33, previousClose: 5979.77, dividendYield: 5.8, sector: "Energía & Recursos", volumeCLP: 1540000000 },
+  { ticker: "VAPORES", name: "Cía. Sudamericana de Vapores", price: 43.00, changePercent: 1.32, previousClose: 42.44, dividendYield: 13.8, sector: "Transporte Marítimo", volumeCLP: 2100000000 },
+  { ticker: "BSANTANDER", name: "Banco Santander Chile", price: 72.10, changePercent: 5.26, previousClose: 68.50, dividendYield: 8.1, sector: "Financiero", volumeCLP: 1150000000 },
+  { ticker: "CMPC", name: "Empresas CMPC S.A.", price: 1910.00, changePercent: -0.55, previousClose: 1920.56, dividendYield: 6.2, sector: "Forestal & Celulosa", volumeCLP: 950000000 },
+  { ticker: "FALABELLA", name: "Falabella S.A.", price: 5740.00, changePercent: 2.87, previousClose: 5579.86, dividendYield: 3.2, sector: "Retail", volumeCLP: 1680000000 },
+  { ticker: "ANDINA-B", name: "Embotelladora Andina S.A.", price: 2520.00, changePercent: 0.30, previousClose: 2512.46, dividendYield: 6.9, sector: "Consumo Masivo", volumeCLP: 510000000 }
 ];
 
 // Some tickers use different symbols on Yahoo than our app
@@ -50,96 +50,7 @@ async function startServer() {
   let indicatorsCache: { data: any, timestamp: number } | null = null;
   const INDICATORS_CACHE_TTL = 60 * 60 * 1000;
 
-  // Helper function to fetch single stock data from Bolsa de Santiago API
-  async function fetchStockFromBCS(ticker: string): Promise<any> {
-    const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
-    const now = Date.now();
-
-    // Check memory cache
-    if (stockCache[cleanTicker] && (now - stockCache[cleanTicker].timestamp < STOCK_CACHE_TTL)) {
-      return stockCache[cleanTicker].data;
-    }
-
-    const bcsHeaders = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      'Accept': 'application/json',
-      'Origin': 'https://www.bolsadesantiago.com',
-      'Referer': 'https://www.bolsadesantiago.com/'
-    };
-
-    // Fetch historical daily data (gives us previous close + volume)
-    const histUrl = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointHistGAT?nemo=${cleanTicker}`;
-    const histResp = await fetch(histUrl, { headers: bcsHeaders });
-    if (!histResp.ok) throw new Error(`BCS hist returned ${histResp.status}`);
-    const histData: any = await histResp.json();
-    const histEntries: any[] = histData?.listaResult || [];
-
-    // Find last two non-zero closes for previousClose and volume
-    let todayClose: number | null = null;
-    let yesterdayClose: number | null = null;
-    let volumeCLP = 0;
-    for (let i = histEntries.length - 1; i >= 0; i--) {
-      const e = histEntries[i];
-      const close = parseFloat(String(e.CLOSE).replace(',', '.'));
-      const vol = parseInt(String(e.VOLUME).replace(/,/g, ''), 10);
-      if (close > 0 && todayClose === null) {
-        todayClose = close;
-        volumeCLP = vol || 0;
-        continue;
-      }
-      if (close > 0 && todayClose !== null && yesterdayClose === null) {
-        yesterdayClose = close;
-        break;
-      }
-    }
-
-    // If no valid data from hist, trigger Yahoo fallback
-    if (todayClose === null && yesterdayClose === null) {
-      throw new Error(`No price data from BCS for ${cleanTicker}`);
-    }
-
-    // Fetch intraday for current live price
-    let currentPrice = todayClose || 0;
-    const intraUrl = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointIntradayGAT?nemo=${cleanTicker}&frecuencia=1`;
-    try {
-      const intraResp = await fetch(intraUrl, { headers: bcsHeaders });
-      if (intraResp.ok) {
-        const intraData: any = await intraResp.json();
-        const intraEntries: any[] = intraData?.listaResult || [];
-        if (intraEntries.length > 0) {
-          const last = intraEntries[intraEntries.length - 1];
-          const lastPrice = parseFloat(String(last.pre_cie).replace(',', '.'));
-          if (lastPrice > 0) currentPrice = lastPrice;
-        }
-      }
-    } catch { /* intraday is optional, fallback to hist close */ }
-
-    const prevClose = yesterdayClose !== null ? yesterdayClose : currentPrice;
-    const changePercent = (prevClose > 0) ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
-
-    // Company name and sector from backup
-    let companyName = cleanTicker + " S.A.";
-    const backupItem = INITIAL_MARKET_STOCKS_BACKUP.find(s => s.ticker === cleanTicker);
-    if (backupItem) companyName = backupItem.name;
-    const dividendYield = backupItem ? backupItem.dividendYield : 6.0;
-    const sector = backupItem ? backupItem.sector : "Bolsa de Santiago";
-
-    const processedData = {
-      ticker: cleanTicker,
-      name: companyName,
-      price: Math.round(currentPrice * 100) / 100,
-      changePercent: Math.round(changePercent * 100) / 100,
-      previousClose: Math.round(prevClose * 100) / 100,
-      dividendYield: Math.round(dividendYield * 10) / 10,
-      sector,
-      volumeCLP: volumeCLP || 1500000
-    };
-
-    stockCache[cleanTicker] = { data: processedData, timestamp: now };
-    return processedData;
-  }
-
-  // Fallback Yahoo chart function (renamed from original fetchStockFromYahoo)
+  // Fetch stock data from Yahoo Finance chart API
   async function fetchStockFromYahooChart(ticker: string): Promise<any> {
     const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
     const now = Date.now();
@@ -249,52 +160,10 @@ async function startServer() {
     }
   }
 
-  // Main fetch function: BCS for Chilean stocks, Yahoo for special tickers (^IPSA, CLP=X)
+  // Main fetch function: always use Yahoo Finance
   async function fetchStockPrice(ticker: string): Promise<any> {
-    const cleanTicker = ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace('.SN', '');
-    // Special tickers → use Yahoo directly
-    if (cleanTicker.startsWith('^') || cleanTicker.includes('=X')) {
-      return fetchStockFromYahooChart(ticker);
-    }
-    // Chilean stock → try BCS first, fallback to Yahoo
-    try {
-      return await fetchStockFromBCS(ticker);
-    } catch (err) {
-      console.warn(`BCS failed for ${cleanTicker}, fallback to Yahoo:`, (err as Error).message);
-      return fetchStockFromYahooChart(ticker);
-    }
+    return fetchStockFromYahooChart(ticker);
   }
-
-  // Proxy: forwards /api/pb/* requests to PocketBase (same-origin, no CORS needed)
-  const PB_INTERNAL = process.env.POCKETBASE_URL || 'http://pocketbase:8090';
-  app.use('/api/pb', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
-    const targetPath = req.originalUrl.replace('/api/pb', '');
-    const targetUrl = `${PB_INTERNAL}${targetPath}`;
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': req.headers['content-type'] as string || 'application/json',
-      };
-      if (req.headers.authorization) headers['Authorization'] = req.headers.authorization as string;
-      if (req.headers.cookie) headers['Cookie'] = req.headers.cookie as string;
-
-      const options: RequestInit = {
-        method: req.method,
-        headers,
-      };
-      if (req.method !== 'GET' && req.method !== 'HEAD' && Buffer.isBuffer(req.body) && req.body.length > 0) {
-        options.body = req.body;
-      }
-
-      const pbResp = await fetch(targetUrl, options);
-      const body = await pbResp.text();
-      const setCookie = pbResp.headers.get('set-cookie');
-      if (setCookie) res.setHeader('Set-Cookie', setCookie);
-      res.status(pbResp.status).type(pbResp.headers.get('content-type') || 'application/json').send(body);
-    } catch (err: any) {
-      console.error('PB proxy error:', err.message);
-      res.status(502).json({ error: 'PocketBase unreachable' });
-    }
-  });
 
   app.get('/api/portfolio-history', async (req, res) => {
     try {
@@ -304,34 +173,32 @@ async function startServer() {
       }
       const tickers = tickersParam.split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
 
-      const bcsHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-        'Origin': 'https://www.bolsadesantiago.com',
-        'Referer': 'https://www.bolsadesantiago.com/'
-      };
-
       const results = await Promise.all(tickers.map(async (ticker) => {
         const cleanTicker = ticker.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         try {
-          const url = `https://www.bolsadesantiago.com/api/RV_Instrumentos/getPointHistGAT?nemo=${cleanTicker}`;
-          const response = await fetch(url, { headers: bcsHeaders });
+          const symbol = `${cleanTicker}.SN`;
+          const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
+          const response = await fetch(url, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'application/json'
+            }
+          });
           if (!response.ok) {
             return { ticker: cleanTicker, history: [] };
           }
           const data: any = await response.json();
-          const entries: any[] = data?.listaResult || [];
+          const result = data?.chart?.result?.[0];
+          if (!result) return { ticker: cleanTicker, history: [] };
+
+          const timestamps: number[] = result.timestamp || [];
+          const closes: (number | null)[] = result.indicators?.quote?.[0]?.close || [];
 
           const history: { date: string; close: number }[] = [];
-          for (const entry of entries) {
-            const close = parseFloat(String(entry.CLOSE).replace(',', '.'));
-            const rawDate = String(entry.DATE || '');
-            // BCS date format: "YYYY-MM-DD"
-            if (close > 0 && rawDate.length >= 10) {
-              history.push({
-                date: rawDate.slice(0, 10),
-                close: Math.round(close * 100) / 100
-              });
+          for (let i = 0; i < timestamps.length; i++) {
+            if (closes[i] !== null && closes[i] !== undefined) {
+              const date = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+              history.push({ date, close: Math.round(closes[i]! * 100) / 100 });
             }
           }
           return { ticker: cleanTicker, history };
@@ -657,13 +524,6 @@ async function startServer() {
       console.error("Error in sync-dividends API:", err?.message || err);
       res.status(500).json({ error: err.message });
     }
-  });
-
-  // API: Expose PocketBase URL to the frontend so it knows where to connect
-  app.get('/api/config', (req, res) => {
-    res.json({
-      pocketbaseUrl: process.env.POCKETBASE_URL || 'http://localhost:8090'
-    });
   });
 
   // Serve static frontend assets

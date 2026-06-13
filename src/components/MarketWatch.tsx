@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MarketStock, StockAlert } from '../types';
 import { formatCLP, formatPercent, normalizeTicker } from '../utils';
 import { Search, Flame, TrendingUp, TrendingDown, DollarSign, PlusCircle, Check, Sparkles, Filter, Trash2, RotateCw, X, Star, Bell, RotateCcw } from 'lucide-react';
+
+const MANUAL_COOLDOWN = 120_000; // 2 min
 import StockHistoryVisualizer from './StockHistoryVisualizer';
 import { useSortable } from '../lib/useSortable';
 
@@ -20,6 +22,7 @@ interface MarketWatchProps {
   onRestoreAllStocks?: () => void;
   onRefreshPrices?: () => void;
   isRefreshing?: boolean;
+  lastRefreshed?: Date;
   alerts?: StockAlert[];
   onToggleAlert?: (ticker: string, currentPrice: number) => void;
   onUpdateTargetPrice?: (ticker: string, targetPrice: number) => void;
@@ -36,11 +39,26 @@ export default function MarketWatch({
   onRestoreAllStocks,
   onRefreshPrices,
   isRefreshing = false,
+  lastRefreshed,
   alerts = [],
   onToggleAlert,
   onUpdateTargetPrice,
   onResetAlert
 }: MarketWatchProps) {
+  const [cooldownLeft, setCooldownLeft] = useState(0);
+
+  useEffect(() => {
+    if (!lastRefreshed) return;
+    const tick = () => {
+      const elapsed = Date.now() - lastRefreshed.getTime();
+      setCooldownLeft(Math.max(0, MANUAL_COOLDOWN - elapsed));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastRefreshed]);
+
+  const canRefresh = cooldownLeft <= 0 && !isRefreshing;
   const [search, setSearch] = useState('');
   const [selectedSector, setSelectedSector] = useState('ALL');
   const [portfolioFilter, setPortfolioFilter] = useState<'ALL' | 'OWNED' | 'NOT_OWNED'>('ALL');
@@ -119,7 +137,7 @@ export default function MarketWatch({
     return matchesSearch && matchesSector && matchesPortfolio;
   });
 
-  const { sortedData: sortedStocks, sortKey: mwSortKey, toggleSort: mwToggleSort, getSortIcon: mwIcon } = useSortable(filteredStocks, '');
+  const { sortedData: sortedStocks, sortKey: mwSortKey, toggleSort: mwToggleSort, getSortIcon: mwIcon } = useSortable(filteredStocks, 'ticker', 'sort_marketwatch');
 
   return (
     <div className="space-y-6">
@@ -297,12 +315,12 @@ export default function MarketWatch({
             {onRefreshPrices && (
               <button
                 onClick={onRefreshPrices}
-                disabled={isRefreshing}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 disabled:bg-slate-50 text-slate-700 disabled:text-slate-400 border border-slate-200 rounded-lg text-[11px] font-bold transition shrink-0 shadow-xs cursor-pointer"
-                title="Actualizar precios en tiempo real"
+                disabled={!canRefresh}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 disabled:bg-slate-50 text-slate-700 disabled:text-slate-400 border border-slate-200 rounded-lg text-[11px] font-bold transition shrink-0 shadow-xs disabled:cursor-not-allowed cursor-pointer"
+                title={canRefresh ? 'Actualizar precios en tiempo real' : `Espere ${Math.ceil(cooldownLeft / 1000)}s`}
               >
                 <RotateCw className={`w-3.5 h-3.5 text-teal-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>{isRefreshing ? 'Actualizando...' : 'Actualizar precio'}</span>
+                <span>{isRefreshing ? 'Actualizando...' : canRefresh ? 'Actualizar precio' : `${Math.ceil(cooldownLeft / 1000)}s`}</span>
               </button>
             )}
           </div>

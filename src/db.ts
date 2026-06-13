@@ -6,8 +6,15 @@
 import { StockHolding, DividendPayment, TaxRefund, MarketStock } from './types';
 import { normalizeTicker } from './utils';
 
+export interface PriceHistoryRecord {
+  ticker_date: string;
+  ticker: string;
+  date: string;
+  close: number;
+}
+
 const DB_NAME = 'BolsaSantiagoPortafolioDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 export interface DBBackupData {
   holdings: StockHolding[];
@@ -94,6 +101,9 @@ export function initDB(): Promise<IDBDatabase> {
         }
         if (!db.objectStoreNames.contains('custom_stocks')) {
           db.createObjectStore('custom_stocks', { keyPath: 'ticker' });
+        }
+        if (!db.objectStoreNames.contains('price_history')) {
+          db.createObjectStore('price_history', { keyPath: 'ticker_date' });
         }
       };
     } catch (e) {
@@ -491,6 +501,49 @@ export const portafolioDB = {
       useMemoryFallback = true;
       memoryStore.settings.deletedTickers = tickers;
       return Promise.resolve();
+    }
+  },
+
+  // Price History
+  async getPriceHistory(ticker: string): Promise<PriceHistoryRecord[]> {
+    if (useMemoryFallback) return [];
+    try {
+      const db = await initDB();
+      return new Promise<PriceHistoryRecord[]>((resolve, reject) => {
+        try {
+          const transaction = db.transaction('price_history', 'readonly');
+          const store = transaction.objectStore('price_history');
+          const range = IDBKeyRange.bound(`${ticker}_`, `${ticker}_\uffff`);
+          const request = store.getAll(range);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        } catch (err) {
+          console.warn('getPriceHistory transaction failed:', err);
+          resolve([]);
+        }
+      });
+    } catch {
+      return [];
+    }
+  },
+  async savePriceHistory(records: PriceHistoryRecord[]): Promise<void> {
+    if (useMemoryFallback || records.length === 0) return;
+    try {
+      const db = await initDB();
+      return new Promise<void>((resolve, reject) => {
+        try {
+          const transaction = db.transaction('price_history', 'readwrite');
+          const store = transaction.objectStore('price_history');
+          for (const r of records) store.put(r);
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+        } catch (err) {
+          console.warn('savePriceHistory transaction failed:', err);
+          resolve();
+        }
+      });
+    } catch {
+      // silently fail
     }
   },
 

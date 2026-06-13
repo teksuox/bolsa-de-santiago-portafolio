@@ -48,3 +48,38 @@ export function formatDateChilean(dateString: string): string {
 export function normalizeTicker(ticker: string): string {
   return ticker.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
+
+/**
+ * Returns whether the Bolsa de Santiago is currently open for trading.
+ * Normal rueda: 09:30 - 15:30, subasta de cierre: 15:30 - 16:00.
+ * Closed on weekends.
+ */
+export function isMarketOpen(): boolean {
+  const now = new Date();
+  const chileOffset = getChileOffset(now);
+  const chile = new Date(now.getTime() + chileOffset);
+  const day = chile.getUTCDay();
+  const hours = chile.getUTCHours();
+  const minutes = chile.getUTCMinutes();
+  const totalMinutes = hours * 60 + minutes;
+
+  // Weekends
+  if (day === 0 || day === 6) return false;
+  // Open 09:30 - 16:00
+  return totalMinutes >= 570 && totalMinutes < 960;
+}
+
+function getChileOffset(date: Date): number {
+  const formatter = new Intl.DateTimeFormat('en', {
+    timeZone: 'America/Santiago',
+    hour: 'numeric',
+    hourCycle: 'h23',
+  });
+  const parts = formatter.formatToParts(date);
+  const hour = parseInt(parts.find(p => p.type === 'hour')!.value, 10);
+  const utcHour = date.getUTCHours();
+  let diff = hour - utcHour;
+  if (diff > 12) diff -= 24;
+  if (diff < -12) diff += 24;
+  return diff * 60 * 60 * 1000;
+}

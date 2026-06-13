@@ -12,6 +12,7 @@ export interface StockHolding {
   currentPrice: number;  // CLP
   buyDate: string;
   annualTargetYield: number; // Porcentaje anual objetivo, ej: 8.5 (%)
+  manualPrice?: boolean; // Si el usuario editó el precio manualmente, no se sobrescribe en auto-refresh
 }
 
 export interface DividendPayment {

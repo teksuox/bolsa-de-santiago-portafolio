@@ -12,8 +12,9 @@ import MarketWatch from './components/MarketWatch';
 import DividendTracker from './components/DividendTracker';
 import TaxRefunds from './components/TaxRefunds';
 import ChartsAndAnalytics from './components/ChartsAndAnalytics';
-import PocketBaseSync from './components/PocketBaseSync';
-import { pb } from './lib/pocketbase';
+import SupabaseSync from './components/SupabaseSync';
+import ProfitHistory from './components/ProfitHistory';
+import { supabase } from './lib/supabase';
 import { DBBackupData } from './db';
 
 import { StockHolding, DividendPayment, TaxRefund, MarketStock, StockAlert } from './types';
@@ -22,7 +23,6 @@ import {
 } from './data';
 import { portafolioDB } from './db';
 import { normalizeTicker } from './utils';
-import { autoConfigurePBUrl } from './lib/pocketbase';
 
 function dedupeCustomStocks(stocks: MarketStock[]): MarketStock[] {
   const seen = new Set<string>();
@@ -37,8 +37,7 @@ function dedupeCustomStocks(stocks: MarketStock[]): MarketStock[] {
 }
 
 export default function App() {
-  // Auto-configure PocketBase URL from server config
-  useEffect(() => { autoConfigurePBUrl(); }, []);
+  // Auto-session restore from Supabase (handled by SDK via localStorage)
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -206,9 +205,17 @@ export default function App() {
     });
   }, [marketStocks]);
 
-  // Real-time auto-refresh trackers
-  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  // Real-time auto-refresh trackers (persisted across refreshes)
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(() => {
+    const stored = localStorage.getItem('lastRefreshed');
+    if (stored) {
+      const parsed = new Date(stored);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date();
+  });
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   // Ref for background refresh to always use latest holdings (avoids stale closure)
   const holdingsRef = useRef(holdings);
@@ -255,6 +262,12 @@ export default function App() {
         const quotes = await marketResponse.json();
         if (quotes && quotes.length > 0) {
           const normalizedQuotes = quotes.map((q: any) => ({ ...q, ticker: normalizeTicker(q.ticker) }));
+          console.log('DEBUG REFRESH: quotes->', normalizedQuotes.map((q:any) => ({ t: q.ticker, price: q.price, prev: q.previousClose })));
+          console.log('DEBUG REFRESH: currentHoldings->', currentHoldings.map((h:any) => ({ t: h.ticker, shares: h.shares, cp: h.currentPrice })));
+          console.log('DEBUG REFRESH: matching->', currentHoldings.map((h:any) => {
+            const q = normalizedQuotes.find((q:any) => q.ticker === normalizeTicker(h.ticker));
+            return { t: h.ticker, matched: !!q, oldPrice: h.currentPrice, newPrice: q?.price };
+          }));
           // 1. Update Market reference list
           setMarketStocks(prev => {
             const customStocks = prev.filter(p => !normalizedQuotes.some((q: any) => q.ticker === normalizeTicker(p.ticker)));
@@ -277,9 +290,10 @@ export default function App() {
             return updatedList;
           });
 
-          // 2. Refresh active holdings pricing
+          // 2. Refresh active holdings pricing (skip manually edited prices)
           setHoldings(prev => {
             return prev.map(h => {
+              if (h.manualPrice) return h;
               const quote = normalizedQuotes.find((q: any) => q.ticker === normalizeTicker(h.ticker));
               if (!quote) return h;
               const updated = {
@@ -291,14 +305,25 @@ export default function App() {
             });
           });
           setLastRefreshed(new Date());
+          setRefreshError(null);
+        } else {
+          setRefreshError('La API respondió vacía. Los precios pueden estar desactualizados.');
         }
+      } else {
+        setRefreshError('Error al conectar con la API de mercado. Los precios pueden estar desactualizados.');
       }
     } catch (err) {
       console.warn('Error fetching live background updates:', err);
+      setRefreshError('Error de red al actualizar precios. Los precios pueden estar desactualizados.');
     } finally {
       if (!silent) setIsRefreshing(false);
     }
   };
+
+  // Persist lastRefreshed to localStorage on every change
+  useEffect(() => {
+    localStorage.setItem('lastRefreshed', lastRefreshed.toISOString());
+  }, [lastRefreshed]);
 
   // Keep ref updated with latest refresh function
   refreshFnRef.current = handleRefreshMarketData;
@@ -485,9 +510,15 @@ export default function App() {
             const quotes = await marketResponse.json();
             if (quotes && quotes.length > 0) {
               const normalizedQuotes = quotes.map((q: any) => ({ ...q, ticker: normalizeTicker(q.ticker) }));
+              console.log('DEBUG MOUNT: quotes->', normalizedQuotes.map((q:any) => ({ t: q.ticker, price: q.price, prev: q.previousClose })));
+              console.log('DEBUG MOUNT: storedHoldings->', storedHoldings.map((h:any) => ({ t: h.ticker, shares: h.shares, cp: h.currentPrice })));
+              console.log('DEBUG MOUNT: matching->', storedHoldings.map((h:any) => {
+                const q = normalizedQuotes.find((q:any) => q.ticker === normalizeTicker(h.ticker));
+                return { t: h.ticker, matched: !!q, oldPrice: h.currentPrice, newPrice: q?.price };
+              }));
               // 1. Update Market reference list
               setMarketStocks(prev => {
-                const customStocks = prev.filter(p => !normalizedQuotes.some((q: any) => q.ticker === p.ticker));
+                const customStocks = prev.filter(p => !normalizedQuotes.some((q: any) => q.ticker === normalizeTicker(p.ticker)));
                 const updatedList = [...normalizedQuotes, ...customStocks];
                 
                 // Sync updated custom stock details back to localStorage & IndexedDB
@@ -512,9 +543,10 @@ export default function App() {
                 return updatedList;
               });
 
-              // 2. Refresh active holdings pricing
+              // 2. Refresh active holdings pricing (skip manually edited prices)
               setHoldings(prev => {
                 return prev.map(h => {
+                  if (h.manualPrice) return h;
                   const quote = normalizedQuotes.find((q: any) => q.ticker === normalizeTicker(h.ticker));
                   if (!quote) return h;
                   const updated = {
@@ -562,95 +594,43 @@ export default function App() {
     loadData();
   }, []);
 
-  // Listen to PocketBase Auth
-  const [pbLoggedIn, setPbLoggedIn] = useState(() => pb.authStore.isValid);
+  // Listen to Supabase Auth
+  const [supabaseUser, setSupabaseUser] = useState<any>(null);
 
   useEffect(() => {
-    const unsubscribe = pb.authStore.onChange((token, model) => {
-      setPbLoggedIn(!!token);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSupabaseUser(session?.user ?? null);
     });
-    return () => unsubscribe();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSupabaseUser(session?.user ?? null);
+    });
+    return () => subscription.unsubscribe();
   }, []);
 
-  // 1. Real-time Subscription (Incoming changes from PocketBase cloud)
+  // Autosync Debounce (Outgoing changes to Supabase cloud)
   useEffect(() => {
-    if (!pbLoggedIn || !pb.authStore.model) return;
-    const userId = pb.authStore.model.id;
-    let isSubscribed = false;
-
-    const setupSubscription = async () => {
-      try {
-        await pb.collection('portafolios').subscribe('*', async (e) => {
-          if (e.action === 'update' && e.record.user === userId && localStorage.getItem('pb_autosync_enabled') === 'true') {
-            const incomingData = e.record.data as DBBackupData;
-            if (!incomingData) return;
-
-            // Deep stringify comparison
-            const currentLocal = await portafolioDB.exportBackup();
-            if (JSON.stringify(currentLocal) !== JSON.stringify(incomingData)) {
-              console.log('📬 PocketBase: ¡Actualización entrante en tiempo real aplicada!');
-              await portafolioDB.importBackup(incomingData);
-
-              // Update states
-              setHoldings(incomingData.holdings || []);
-              setDividends(incomingData.dividends || []);
-              setRefunds(incomingData.refunds || []);
-              setAnnualPerformancePercent(incomingData.annualPerformancePercent ?? 8.5);
-              setDeletedStocks(incomingData.deletedTickers || []);
-
-              if (incomingData.customStocks) {
-                const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
-                const customOnly = dedupeCustomStocks(incomingData.customStocks).filter(cs => !standardTickers.includes(cs.ticker));
-                setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
-                localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
-              }
-            }
-          }
-        });
-        isSubscribed = true;
-      } catch (err) {
-        console.warn('Subscription error:', err);
-      }
-    };
-
-    setupSubscription();
-
-    return () => {
-      if (isSubscribed) {
-        pb.collection('portafolios').unsubscribe('*').catch(() => {});
-      }
-    };
-  }, [pbLoggedIn]);
-
-  // 2. Autosync Debounce (Outgoing changes to PocketBase cloud)
-  useEffect(() => {
-    const isAutosync = localStorage.getItem('pb_autosync_enabled') === 'true';
-    if (!isAutosync || !pbLoggedIn || !pb.authStore.model || isLoading) return;
+    const isAutosync = localStorage.getItem('supabase_autosync') === 'true';
+    if (!isAutosync || !supabaseUser || isLoading) return;
 
     const serializeAndUpload = async () => {
       try {
         const localData = await portafolioDB.exportBackup();
+        const { data: existing } = await supabase
+          .from('portafolios')
+          .select('data')
+          .eq('user_id', supabaseUser.id)
+          .single();
         
-        // Search & compare if we actually need to upload or if server is already identical
-        const records = await pb.collection('portafolios').getFullList({
-          filter: `user = "${pb.authStore.model?.id}"`,
-          requestKey: null
-        });
-        if (records.length > 0) {
-          const currentRemoteData = records[0].data;
-          if (JSON.stringify(currentRemoteData) === JSON.stringify(localData)) {
-            return; // Already in-sync
-          }
+        if (existing && JSON.stringify(existing.data) === JSON.stringify(localData)) {
+          return; // Already in-sync
         }
-        
-        // Perform sync upload
-        const userId = pb.authStore.model?.id;
-        if (records.length > 0) {
-          await pb.collection('portafolios').update(records[0].id, { data: localData }, { requestKey: null });
-        } else {
-          await pb.collection('portafolios').create({ user: userId, data: localData }, { requestKey: null });
-        }
-        console.log('🚀 PocketBase: ¡Portafolio autosincronizado con éxito!');
+
+        const { error } = await supabase.from('portafolios').upsert(
+          { user_id: supabaseUser.id, data: localData },
+          { onConflict: 'user_id' }
+        );
+        if (error) throw error;
+        console.log('☁️ Datos auto-sincronizados con Supabase');
       } catch (err) {
         console.warn('Auto-sync error:', err);
       }
@@ -658,7 +638,7 @@ export default function App() {
 
     const timer = setTimeout(serializeAndUpload, 1500);
     return () => clearTimeout(timer);
-  }, [holdings, dividends, refunds, annualPerformancePercent, marketStocks, deletedStocks, pbLoggedIn, isLoading]);
+  }, [holdings, dividends, refunds, annualPerformancePercent, marketStocks, deletedStocks, supabaseUser, isLoading]);
 
   // Handlers for Portfolio
   const handleAddHolding = async (newHolding: Omit<StockHolding, 'id'>) => {
@@ -712,14 +692,14 @@ export default function App() {
     
     setHoldings(prev => prev.map(h => {
       if (h.id === id) {
-        targetHolding = { ...h, currentPrice: newPrice };
+        targetHolding = { ...h, currentPrice: newPrice, manualPrice: true };
         return targetHolding;
       }
       return h;
     }));
 
     if (targetHolding) {
-      await portafolioDB.saveHolding(targetHolding);
+      await portafolioDB.saveHolding({ ...targetHolding, manualPrice: true });
       
       // Update corresponding reference price in market stock list
       setMarketStocks(prev => prev.map(m => {
@@ -729,6 +709,17 @@ export default function App() {
         return m;
       }));
     }
+  };
+
+  const handleResetManualPrice = async (id: string) => {
+    setHoldings(prev => prev.map(h => {
+      if (h.id === id) {
+        const updated = { ...h, manualPrice: false };
+        portafolioDB.saveHolding(updated);
+        return updated;
+      }
+      return h;
+    }));
   };
 
   const handleUpdateHoldingYield = async (id: string, newYield: number) => {
@@ -999,9 +990,10 @@ export default function App() {
         portfolioValue={portfolioValuation}
         onRefreshMarketData={() => handleRefreshMarketData(false)}
         isRefreshing={isRefreshing}
+        lastRefreshed={lastRefreshed}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 lg:p-8">
+      <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 md:p-6 lg:p-8">
         {isLoading ? (
           <div className="min-h-[50vh] flex flex-col items-center justify-center space-y-4">
             <div className="w-10 h-10 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
@@ -1041,6 +1033,25 @@ export default function App() {
               </div>
             )}
 
+            {/* API Error Banner */}
+            {refreshError && (
+              <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 shadow-xs flex items-start justify-between gap-3">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-7 h-7 rounded-full bg-rose-100 flex items-center justify-center text-rose-500 shrink-0">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                  </div>
+                  <p className="text-xs text-rose-700 font-medium">{refreshError}</p>
+                </div>
+                <button
+                  onClick={() => setRefreshError(null)}
+                  className="text-rose-400 hover:text-rose-600 p-1 rounded-lg transition shrink-0 cursor-pointer"
+                  title="Cerrar"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -1070,9 +1081,14 @@ export default function App() {
                   onUpdateHoldingPrice={handleUpdateHoldingPrice}
                   onUpdateHoldingYield={handleUpdateHoldingYield}
                   onDeleteHolding={handleDeleteHolding}
+                  onResetManualPrice={handleResetManualPrice}
                   marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker))}
                   dailyPnL={dailyPnL}
                 />
+              )}
+
+              {activeTab === 'history' && (
+                <ProfitHistory holdings={holdings} />
               )}
 
               {activeTab === 'dividends' && (
@@ -1101,6 +1117,7 @@ export default function App() {
                   marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker))}
                   onQuickBuy={handleMarketQuickBuy}
                   holdings={holdings}
+                  lastRefreshed={lastRefreshed}
                   onSearchAndAddStock={(newStock) => {
                     const normalizedTicker = normalizeTicker(newStock.ticker);
                     const normalizedStock = { ...newStock, ticker: normalizedTicker };
@@ -1147,22 +1164,23 @@ export default function App() {
               )}
 
               {activeTab === 'backup' && (
-                <PocketBaseSync
-                  onDataRestored={async () => {
+                <SupabaseSync
+                  onImport={async (data: DBBackupData) => {
                     try {
+                      await portafolioDB.importBackup(data);
                       const storedHoldings = await portafolioDB.getHoldings();
                       const storedDividends = await portafolioDB.getDividends();
                       const storedRefunds = await portafolioDB.getRefunds();
                       const storedYield = await portafolioDB.getAnnualYield();
                       const storedCustomStocks = await portafolioDB.getCustomStocks();
                       const storedDeletedTickers = await portafolioDB.getDeletedTickers();
-                      
+
                       setHoldings(storedHoldings);
                       setDividends(storedDividends);
                       setRefunds(storedRefunds);
                       setAnnualPerformancePercent(storedYield);
                       setDeletedStocks(storedDeletedTickers);
-                      
+
                       const standardTickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
                       const customOnly = dedupeCustomStocks(storedCustomStocks).filter(cs => !standardTickers.includes(cs.ticker));
                       setMarketStocks([...INITIAL_MARKET_STOCKS, ...customOnly]);
@@ -1170,20 +1188,25 @@ export default function App() {
                         localStorage.setItem('custom_searched_stocks', JSON.stringify(customOnly));
                         localStorage.setItem('deleted_market_tickers', JSON.stringify(storedDeletedTickers));
                       } catch (e) {
-                        console.warn('Error saving updated custom_searched_stocks or deleted tickers on cloud restore:', e);
+                        console.warn('Error saving updated custom_stocks on cloud restore:', e);
                       }
-                      
                       handleTabChange('dashboard');
                     } catch (err) {
-                      console.error('Error al recargar datos importados:', err);
+                      console.error('Error al importar datos:', err);
                     }
                   }}
-                  holdings={holdings}
-                  dividends={dividends}
-                  refunds={refunds}
-                  annualPerformancePercent={annualPerformancePercent}
-                  marketStocks={marketStocks}
-                  deletedStocks={deletedStocks}
+                  getBackupData={() => {
+                    // Returns current state as DBBackupData for cloud upload
+                    return {
+                      holdings,
+                      dividends,
+                      refunds,
+                      annualPerformancePercent,
+                      deletedTickers: deletedStocks,
+                      customStocks: marketStocks.filter(s => !["CHILE","SQM-B","ENELCHILE","CENCOSHOP","COPEC","VAPORES","BSANTANDER","CMPC","FALABELLA","ANDINA-B"].includes(s.ticker)),
+                      exportedAt: new Date().toISOString()
+                    };
+                  }}
                   onExportBackup={handleExportBackup}
                   onImportBackup={handleImportBackup}
                   onClearAllData={handleClearAllData}
