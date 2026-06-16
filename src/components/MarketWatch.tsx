@@ -6,9 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import { MarketStock, StockAlert } from '../types';
 import { formatCLP, formatPercent, normalizeTicker } from '../utils';
-import { Search, Flame, TrendingUp, TrendingDown, DollarSign, PlusCircle, Check, Sparkles, Filter, Trash2, RotateCw, X, Star, Bell, RotateCcw } from 'lucide-react';
+import { Search, Flame, TrendingUp, TrendingDown, DollarSign, PlusCircle, Check, Sparkles, Filter, Trash2, X, Star, Bell, RotateCcw } from 'lucide-react';
 
-const MANUAL_COOLDOWN = 120_000; // 2 min
 import StockHistoryVisualizer from './StockHistoryVisualizer';
 import { useSortable } from '../lib/useSortable';
 
@@ -20,9 +19,7 @@ interface MarketWatchProps {
   onDeleteStock?: (ticker: string) => void;
   deletedStocksCount?: number;
   onRestoreAllStocks?: () => void;
-  onRefreshPrices?: () => void;
-  isRefreshing?: boolean;
-  lastRefreshed?: Date;
+  nextRefreshTime?: number;
   alerts?: StockAlert[];
   onToggleAlert?: (ticker: string, currentPrice: number) => void;
   onUpdateTargetPrice?: (ticker: string, targetPrice: number) => void;
@@ -37,9 +34,7 @@ export default function MarketWatch({
   onDeleteStock,
   deletedStocksCount = 0,
   onRestoreAllStocks,
-  onRefreshPrices,
-  isRefreshing = false,
-  lastRefreshed,
+  nextRefreshTime,
   alerts = [],
   onToggleAlert,
   onUpdateTargetPrice,
@@ -48,17 +43,15 @@ export default function MarketWatch({
   const [cooldownLeft, setCooldownLeft] = useState(0);
 
   useEffect(() => {
-    if (!lastRefreshed) return;
+    if (!nextRefreshTime) return;
     const tick = () => {
-      const elapsed = Date.now() - lastRefreshed.getTime();
-      setCooldownLeft(Math.max(0, MANUAL_COOLDOWN - elapsed));
+      setCooldownLeft(Math.max(0, nextRefreshTime - Date.now()));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [lastRefreshed]);
+  }, [nextRefreshTime]);
 
-  const canRefresh = cooldownLeft <= 0 && !isRefreshing;
   const [search, setSearch] = useState('');
   const [selectedSector, setSelectedSector] = useState('ALL');
   const [portfolioFilter, setPortfolioFilter] = useState<'ALL' | 'OWNED' | 'NOT_OWNED'>('ALL');
@@ -296,7 +289,7 @@ export default function MarketWatch({
                 }`}
               >
                 En mi Portafolio
-                <span className="bg-emerald-200 text-emerald-950 font-mono text-[9px] px-1.5 py-0.2 rounded-full leading-tight font-bold">
+                <span className="bg-emerald-200 text-emerald-950 font-mono text-[9px] px-1.5 py-0.5 rounded-full leading-tight font-bold">
                   {new Set(holdings.map(h => h.ticker)).size}
                 </span>
               </button>
@@ -312,17 +305,9 @@ export default function MarketWatch({
               </button>
             </div>
 
-            {onRefreshPrices && (
-              <button
-                onClick={onRefreshPrices}
-                disabled={!canRefresh}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 disabled:bg-slate-50 text-slate-700 disabled:text-slate-400 border border-slate-200 rounded-lg text-[11px] font-bold transition shrink-0 shadow-xs disabled:cursor-not-allowed cursor-pointer"
-                title={canRefresh ? 'Actualizar precios en tiempo real' : `Espere ${Math.ceil(cooldownLeft / 1000)}s`}
-              >
-                <RotateCw className={`w-3.5 h-3.5 text-teal-600 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span>{isRefreshing ? 'Actualizando...' : canRefresh ? 'Actualizar precio' : `${Math.ceil(cooldownLeft / 1000)}s`}</span>
-              </button>
-            )}
+            <span className="text-[11px] text-slate-400 font-mono">
+              ⏱ {Math.ceil(cooldownLeft / 1000)}s
+            </span>
           </div>
         </div>
 

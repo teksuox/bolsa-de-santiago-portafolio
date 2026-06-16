@@ -7,9 +7,16 @@ import dotenv from 'dotenv';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import { createClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 
 // Load environment variables from .env file
 dotenv.config();
+
+// Supabase client for shared market data cache
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, { realtime: { transport: WebSocket as any } }) : null;
 
 // Current local time (dynamic for dividend received/estimated logic)
 const CURRENT_DATE_STRING = new Date().toISOString().split('T')[0];
@@ -165,6 +172,8 @@ async function startServer() {
     return fetchStockFromYahooChart(ticker);
   }
 
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
   app.get('/api/portfolio-history', async (req, res) => {
     try {
       const tickersParam = req.query.tickers;
@@ -175,6 +184,26 @@ async function startServer() {
 
       const results = await Promise.all(tickers.map(async (ticker) => {
         const cleanTicker = ticker.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const cacheKey = `portfolio_history_${cleanTicker}`;
+
+        // 1. Check Supabase cache
+        if (supabase) {
+          try {
+            const { data: cached } = await supabase
+              .from('market_data')
+              .select('data, updated_at')
+              .eq('key', cacheKey)
+              .single();
+
+            if (cached) {
+              const age = Date.now() - new Date(cached.updated_at).getTime();
+              if (age < CACHE_TTL) {
+                return { ticker: cleanTicker, history: cached.data, fromCache: true };
+              }
+            }
+          } catch { /* cache miss, continue to fetch */ }
+        }
+
         try {
           const symbol = `${cleanTicker}.SN`;
           const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1y`;
@@ -201,6 +230,17 @@ async function startServer() {
               history.push({ date, close: Math.round(closes[i]! * 100) / 100 });
             }
           }
+
+          // 2. Save to Supabase cache
+          if (supabase && history.length > 0) {
+            try {
+              await supabase.from('market_data').upsert(
+                { key: cacheKey, data: history, updated_at: new Date().toISOString() },
+                { onConflict: 'key' }
+              );
+            } catch { /* cache save best-effort */ }
+          }
+
           return { ticker: cleanTicker, history };
         } catch {
           return { ticker: cleanTicker, history: [] };
@@ -216,6 +256,28 @@ async function startServer() {
 
   app.get('/api/market-stocks', async (req, res) => {
     try {
+      // 1. Check Supabase shared cache first
+      if (supabase) {
+        try {
+          const { data: cached } = await supabase
+            .from('market_data')
+            .select('data, updated_at')
+            .eq('key', 'market_stocks')
+            .single();
+
+          if (cached) {
+            const age = Date.now() - new Date(cached.updated_at).getTime();
+            if (age < CACHE_TTL) {
+              console.log('Serving market stocks from Supabase cache');
+              return res.json(cached.data);
+            }
+            console.log('Supabase cache stale, re-fetching from Yahoo');
+          }
+        } catch (err) {
+          console.warn('Supabase cache check failed, falling back to Yahoo:', err);
+        }
+      }
+
       const tickers = ["CHILE", "SQM-B", "ENELCHILE", "CENCOSHOP", "COPEC", "VAPORES", "BSANTANDER", "CMPC", "FALABELLA", "ANDINA-B"];
       
       let additionalTickers: string[] = [];
@@ -228,7 +290,7 @@ async function startServer() {
       
       const allTickers = [...tickers, ...additionalTickers];
 
-      // Fetch details of all tickers concurrently from the crumb-free chart endpoint
+      // 2. Fetch from Yahoo
       const quotes = await Promise.all(allTickers.map(async (t) => {
         try {
           return await fetchStockPrice(t);
@@ -245,6 +307,18 @@ async function startServer() {
           };
         }
       }));
+
+      // 3. Save to Supabase cache
+      if (supabase) {
+        try {
+          await supabase.from('market_data').upsert(
+            { key: 'market_stocks', data: quotes, updated_at: new Date().toISOString() },
+            { onConflict: 'key' }
+          );
+        } catch (err) {
+          console.warn('Failed to save market stocks to Supabase cache:', err);
+        }
+      }
 
       res.json(quotes);
     } catch (err: any) {

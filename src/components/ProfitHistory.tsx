@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StockHolding } from '../types';
 import { formatCLP } from '../utils';
-import { portafolioDB, PriceHistoryRecord } from '../db';
+import { portafolioDB, PriceHistoryRecord, DailySnapshot } from '../db';
 
 interface ProfitHistoryProps {
   holdings: StockHolding[];
+  todayPnL?: number;
 }
 
 type DateFilter = 'month' | 'year' | 'custom';
@@ -37,7 +38,7 @@ function getFirstOfYear(d: Date): Date {
   return new Date(d.getFullYear(), 0, 1);
 }
 
-export default function ProfitHistory({ holdings }: ProfitHistoryProps) {
+export default function ProfitHistory({ holdings, todayPnL }: ProfitHistoryProps) {
   const [filter, setFilter] = useState<DateFilter>('month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -70,14 +71,23 @@ export default function ProfitHistory({ holdings }: ProfitHistoryProps) {
     async function load() {
       setIsLoading(true);
 
-      // Check cache hit per ticker
+      // Check cache hit per ticker, refresh if stale (> 3 days old)
+      const staleThreshold = new Date();
+      staleThreshold.setDate(staleThreshold.getDate() - 3);
+      const thresholdStr = staleThreshold.toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
       const tickersToFetch: string[] = [];
       const cachedData = new Map<string, PriceHistoryRecord[]>();
 
       for (const t of uniqueTickers) {
         const cached = await portafolioDB.getPriceHistory(t);
         if (cached.length > 0) {
-          cachedData.set(t, cached);
+          const maxDate = cached.reduce((max, r) => r.date > max ? r.date : max, '');
+          if (maxDate < thresholdStr) {
+            // Cache is stale, re-fetch
+            tickersToFetch.push(t);
+          } else {
+            cachedData.set(t, cached);
+          }
         } else {
           tickersToFetch.push(t);
         }
@@ -185,7 +195,7 @@ export default function ProfitHistory({ holdings }: ProfitHistoryProps) {
       }
 
       // Build a portfolio snapshot per date (skip empty dates)
-      const pnlEntries: PnLEntry[] = [];
+      let pnlEntries: PnLEntry[] = [];
       let prevValue = initialPortfolioValue;
 
       for (const date of sortedDates) {
@@ -225,7 +235,67 @@ export default function ProfitHistory({ holdings }: ProfitHistoryProps) {
         prevValue = portfolioValue;
       }
 
+      // Merge daily snapshots: add missing dates from local snapshots
+      const snapshots = await portafolioDB.getDailySnapshots();
+
+      if (snapshots.length > 0) {
+        const existingDates = new Set(pnlEntries.map(e => e.date));
+        const extraEntries: typeof pnlEntries = [];
+
+        for (const s of snapshots) {
+          if (s.date < startStr || s.date > endStr) continue;
+          if (existingDates.has(s.date)) continue;
+          extraEntries.push({
+            date: s.date,
+            portfolioValue: s.portfolioValue,
+            dailyPnL: 0,
+            dailyPnLPct: 0,
+          });
+        }
+
+        if (extraEntries.length > 0) {
+          // Merge and sort all entries by date
+          const allEntries = [...pnlEntries, ...extraEntries].sort((a, b) => a.date.localeCompare(b.date));
+
+          // Recalculate daily P&L for entries after a snapshot gap
+          // Keep original P&L for Yahoo-derived entries, recalc only for snapshot rows and subsequent rows
+          const merged: typeof pnlEntries = [];
+          for (let i = 0; i < allEntries.length; i++) {
+            const cur = allEntries[i];
+            if (i === 0) {
+              merged.push(cur);
+              continue;
+            }
+            const prev = merged[merged.length - 1];
+            // If current entry is from a snapshot, recalc P&L from previous entry
+            // If previous was a snapshot, recalc P&L for this entry too
+            if (extraEntries.some(e => e.date === cur.date) || extraEntries.some(e => e.date === prev.date)) {
+              const dailyPnL = cur.portfolioValue - prev.portfolioValue;
+              merged.push({
+                ...cur,
+                dailyPnL: Math.round(dailyPnL),
+                dailyPnLPct: Math.round((prev.portfolioValue > 0 ? (dailyPnL / prev.portfolioValue) * 100 : 0) * 100) / 100,
+              });
+            } else {
+              // Both from Yahoo - use original P&L
+              merged.push(cur);
+            }
+          }
+          pnlEntries = merged;
+        }
+      }
+
       if (!cancelled) {
+        // Override today's P&L with live value from dashboard if available
+        if (todayPnL !== undefined) {
+          const todayEntry = pnlEntries.find(e => e.date === today);
+          if (todayEntry) {
+            const prevEntry = pnlEntries[pnlEntries.indexOf(todayEntry) - 1];
+            const prevValue = prevEntry?.portfolioValue ?? (todayEntry.portfolioValue - todayPnL);
+            todayEntry.dailyPnL = Math.round(todayPnL);
+            todayEntry.dailyPnLPct = Math.round((prevValue > 0 ? (todayPnL / prevValue) * 100 : 0) * 100) / 100;
+          }
+        }
         setEntries(pnlEntries);
         setIsLoading(false);
       }
@@ -235,11 +305,21 @@ export default function ProfitHistory({ holdings }: ProfitHistoryProps) {
     return () => { cancelled = true; };
   }, [uniqueTickers, filter, customStart, customEnd]);
 
-  const totalPnL = entries.length > 0
-    ? entries[entries.length - 1].portfolioValue - entries[0].portfolioValue + entries[0].dailyPnL
-    : 0;
-  const initialValue = entries.length > 0 ? entries[0].portfolioValue - entries[0].dailyPnL : 0;
-  const totalPnLPct = initialValue > 0 ? (totalPnL / initialValue) * 100 : null;
+  // Total P&L for the selected period:
+  // currentValue - (periodStartValue + newInvestmentsAfterFirstDate)
+  const currentValue = holdings.reduce((sum, h) => sum + (h.shares * h.currentPrice), 0);
+  let totalPnL = 0;
+  let totalPnLPct: number | null = null;
+  if (entries.length > 0) {
+    const periodStartValue = entries[0].portfolioValue - entries[0].dailyPnL;
+    // Holdings bought strictly after the first entry date (not accounted in periodStartValue)
+    const newInvestments = holdings
+      .filter(h => h.buyDate > entries[0].date)
+      .reduce((sum, h) => sum + (h.shares * h.buyPrice), 0);
+    const adjustedStart = periodStartValue + newInvestments;
+    totalPnL = currentValue - adjustedStart;
+    totalPnLPct = adjustedStart > 0 ? (totalPnL / adjustedStart) * 100 : null;
+  }
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

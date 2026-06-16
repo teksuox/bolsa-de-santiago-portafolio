@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bell, X } from 'lucide-react';
 import Header from './components/Header';
@@ -13,7 +13,8 @@ import DividendTracker from './components/DividendTracker';
 import TaxRefunds from './components/TaxRefunds';
 import ChartsAndAnalytics from './components/ChartsAndAnalytics';
 import SupabaseSync from './components/SupabaseSync';
-import ProfitHistory from './components/ProfitHistory';
+import HistoryPage from './components/HistoryPage';
+import InvestmentPlan from './components/InvestmentPlan';
 import { supabase } from './lib/supabase';
 import { DBBackupData } from './db';
 
@@ -165,6 +166,8 @@ export default function App() {
   // Check alert triggers whenever market prices are fetched or updated
   useEffect(() => {
     if (marketStocks.length === 0) return;
+    // Skip trigger on fallback/initial data before first real API fetch
+    if (!marketDataLoadedRef.current) return;
 
     setAlerts(prevAlerts => {
       if (prevAlerts.length === 0) return prevAlerts;
@@ -214,6 +217,7 @@ export default function App() {
     }
     return new Date();
   });
+  const [nextRefreshTime, setNextRefreshTime] = useState<number>(Date.now() + 180000);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
@@ -222,6 +226,9 @@ export default function App() {
   holdingsRef.current = holdings;
 
   const refreshFnRef = useRef<((silent: boolean) => Promise<void>) | null>(null);
+
+  // Prevents alert triggers from firing on fallback/initial data before first real API fetch
+  const marketDataLoadedRef = useRef(false);
 
   // Synchronize stock rates and indicator data in the background from Yahoo Finance
   const handleRefreshMarketData = async (silent: boolean = false) => {
@@ -305,7 +312,31 @@ export default function App() {
             });
           });
           setLastRefreshed(new Date());
+          setNextRefreshTime(Date.now() + 180000);
           setRefreshError(null);
+          marketDataLoadedRef.current = true;
+
+          // Immediate upload to Supabase after price refresh
+          if (supabaseUser) {
+            try {
+              const localData = await portafolioDB.exportBackup();
+              await supabase.from('portafolios').upsert(
+                { user_id: supabaseUser.id, data: localData },
+                { onConflict: 'user_id' }
+              );
+            } catch (e) {
+              console.warn('Error uploading prices to Supabase:', e);
+            }
+          }
+
+          // Save daily snapshot for ProfitHistory
+          const snapshotValue = currentHoldings.reduce((sum, h) => {
+            if (h.manualPrice) return sum + h.shares * h.currentPrice;
+            const quote = normalizedQuotes.find((q: any) => q.ticker === normalizeTicker(h.ticker));
+            return sum + h.shares * (quote?.price || h.currentPrice);
+          }, 0);
+          const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+          portafolioDB.saveDailySnapshot({ date: todayStr, portfolioValue: Math.round(snapshotValue) });
         } else {
           setRefreshError('La API respondió vacía. Los precios pueden estar desactualizados.');
         }
@@ -328,11 +359,11 @@ export default function App() {
   // Keep ref updated with latest refresh function
   refreshFnRef.current = handleRefreshMarketData;
 
-  // Setup periodic polling interval (automatic sync every 45 seconds)
+  // Setup periodic polling interval (automatic sync every 3 minutes)
   useEffect(() => {
     const interval = setInterval(() => {
       refreshFnRef.current?.(true); // Silent background refresh
-    }, 300000);
+    }, 180000);
     return () => clearInterval(interval);
   }, []);
 
@@ -557,6 +588,7 @@ export default function App() {
                   return updated;
                 });
               });
+              marketDataLoadedRef.current = true;
             }
           }
         } catch (apiErr) {
@@ -619,7 +651,7 @@ export default function App() {
           .from('portafolios')
           .select('data')
           .eq('user_id', supabaseUser.id)
-          .single();
+          .maybeSingle();
         
         if (existing && JSON.stringify(existing.data) === JSON.stringify(localData)) {
           return; // Already in-sync
@@ -988,9 +1020,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={handleTabChange}
         portfolioValue={portfolioValuation}
-        onRefreshMarketData={() => handleRefreshMarketData(false)}
-        isRefreshing={isRefreshing}
-        lastRefreshed={lastRefreshed}
+        nextRefreshTime={nextRefreshTime}
       />
 
       <main className="flex-1 max-w-[1400px] w-full mx-auto p-4 md:p-6 lg:p-8">
@@ -1082,13 +1112,16 @@ export default function App() {
                   onUpdateHoldingYield={handleUpdateHoldingYield}
                   onDeleteHolding={handleDeleteHolding}
                   onResetManualPrice={handleResetManualPrice}
-                  marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker))}
+                  marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker) || holdings.some(h => h.ticker === s.ticker))}
                   dailyPnL={dailyPnL}
                 />
               )}
 
-              {activeTab === 'history' && (
-                <ProfitHistory holdings={holdings} />
+              {activeTab === 'plan' && (
+                <InvestmentPlan
+                  marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker) || holdings.some(h => h.ticker === s.ticker))}
+                  holdings={holdings}
+                />
               )}
 
               {activeTab === 'dividends' && (
@@ -1112,12 +1145,16 @@ export default function App() {
                 />
               )}
 
+              {activeTab === 'history' && (
+                <HistoryPage holdings={holdings} dividends={dividends} todayPnL={dailyPnL} />
+              )}
+
               {activeTab === 'market' && (
                 <MarketWatch
-                  marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker))}
+                  marketStocks={marketStocks.filter(s => !deletedStocks.includes(s.ticker) || holdings.some(h => h.ticker === s.ticker))}
                   onQuickBuy={handleMarketQuickBuy}
                   holdings={holdings}
-                  lastRefreshed={lastRefreshed}
+                  nextRefreshTime={nextRefreshTime}
                   onSearchAndAddStock={(newStock) => {
                     const normalizedTicker = normalizeTicker(newStock.ticker);
                     const normalizedStock = { ...newStock, ticker: normalizedTicker };
@@ -1154,8 +1191,6 @@ export default function App() {
                   onDeleteStock={handleDeleteMarketStock}
                   deletedStocksCount={deletedStocks.length}
                   onRestoreAllStocks={handleRestoreAllMarketStocks}
-                  onRefreshPrices={() => handleRefreshMarketData(false)}
-                  isRefreshing={isRefreshing}
                   alerts={alerts}
                   onToggleAlert={handleToggleAlert}
                   onUpdateTargetPrice={handleUpdateTargetPrice}

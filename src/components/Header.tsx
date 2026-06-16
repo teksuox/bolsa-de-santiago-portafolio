@@ -7,39 +7,31 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, DollarSign, Wallet, Calendar, FileCheck, Landmark, Briefcase, Cloud } from 'lucide-react';
 import { isMarketOpen } from '../utils';
 
-const MANUAL_COOLDOWN = 120_000; // 2 min
-
 interface HeaderProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   portfolioValue: number;
-  onRefreshMarketData?: () => void;
-  isRefreshing?: boolean;
-  lastRefreshed?: Date;
+  nextRefreshTime?: number;
 }
 
 export default function Header({ 
   activeTab, 
   setActiveTab, 
   portfolioValue,
-  onRefreshMarketData,
-  isRefreshing = false,
-  lastRefreshed
+  nextRefreshTime
 }: HeaderProps) {
   const [cooldownLeft, setCooldownLeft] = useState(0);
 
   useEffect(() => {
-    if (!lastRefreshed) return;
+    if (!nextRefreshTime) return;
     const tick = () => {
-      const elapsed = Date.now() - lastRefreshed.getTime();
-      setCooldownLeft(Math.max(0, MANUAL_COOLDOWN - elapsed));
+      setCooldownLeft(Math.max(0, nextRefreshTime - Date.now()));
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [lastRefreshed]);
+  }, [nextRefreshTime]);
 
-  const canRefresh = cooldownLeft <= 0 && !isRefreshing;
   // Live values of official indices according to official SII
   const [usdClp, setUsdClp] = useState(894.99);
   const [usdChange, setUsdChange] = useState(-0.05);
@@ -78,9 +70,10 @@ export default function Header({
   const navItems = [
     { id: 'dashboard', label: 'Resumen & Gráficos', icon: TrendingUp },
     { id: 'portfolio', label: 'Mi Portafolio', icon: Briefcase },
-    { id: 'history', label: 'Historial', icon: TrendingUp },
+    { id: 'plan', label: 'Plan Inversión', icon: Wallet },
     { id: 'dividends', label: 'Calendario Dividendos', icon: Calendar },
     { id: 'taxes', label: 'Operación Renta', icon: FileCheck },
+    { id: 'history', label: 'Historial', icon: TrendingUp },
     { id: 'market', label: 'Bolsa de Santiago (IPSA)', icon: Landmark },
     { id: 'backup', label: 'Respaldo Cloud', icon: Cloud },
   ];
@@ -106,30 +99,17 @@ export default function Header({
           </div>
 
           <div className="text-slate-400 flex items-center space-x-3">
+            <div className="flex items-center space-x-2 px-2.5 py-1 bg-slate-950/75 rounded-lg border border-slate-800 text-teal-400 font-mono text-[11px] whitespace-nowrap">
+              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Portafolio:</span>
+              <span className="font-extrabold">{formatRawCLP(portfolioValue)}</span>
+            </div>
             <div className="flex items-center space-x-2 shrink-0">
               <span className={`w-1.5 h-1.5 rounded-full inline-block ${isMarketOpen() ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></span>
               <span>{isMarketOpen() ? 'Mercado Abierto' : 'Mercado Cerrado'}</span>
             </div>
-            {onRefreshMarketData && (
-              <button
-                type="button"
-                onClick={onRefreshMarketData}
-                disabled={!canRefresh}
-                className="text-[10px] bg-teal-500 hover:bg-teal-400 hover:text-slate-950 text-slate-950 font-bold border border-teal-500 rounded-md px-2.5 py-0.5 transition flex items-center gap-1 uppercase disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                title={canRefresh ? 'Actualizar Precios de Acciones en Vivo' : `Espere ${Math.ceil(cooldownLeft / 1000)}s`}
-              >
-                {isRefreshing ? (
-                  <>
-                    <span className="w-1.5 h-1.5 border border-slate-950 border-t-transparent rounded-full animate-spin"></span>
-                    <span>...</span>
-                  </>
-                ) : canRefresh ? (
-                  <span>Actualizar Precio</span>
-                ) : (
-                  <span>{Math.ceil(cooldownLeft / 1000)}s</span>
-                )}
-              </button>
-            )}
+            <span className="text-[10px] text-slate-400 font-mono">
+              ⏱ {Math.ceil(cooldownLeft / 1000)}s
+            </span>
           </div>
         </div>
       </div>
@@ -170,17 +150,8 @@ export default function Header({
             })}
           </div>
 
-          {/* Right section container: Portfolio status */}
-          <div className="flex items-center space-x-2 shrink-0">
-            {/* Integrated total index wrapper - placed strictly at the right of 'Bolsa de Santiago (IPSA)' menu */}
-            <div className="flex items-center space-x-1.5 px-2.5 py-1.5 bg-slate-950/75 rounded-lg border border-slate-800 text-teal-400 font-mono text-[11px] whitespace-nowrap">
-              <span className="text-slate-400 font-bold uppercase text-[9px] tracking-wider">Portafolio:</span>
-              <span className="font-extrabold">{formatRawCLP(portfolioValue)}</span>
-            </div>
           </div>
-
         </div>
-      </div>
     </header>
   );
 }

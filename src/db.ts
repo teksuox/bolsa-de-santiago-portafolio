@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { StockHolding, DividendPayment, TaxRefund, MarketStock } from './types';
+import { StockHolding, DividendPayment, TaxRefund, MarketStock, StockAlert } from './types';
 import { normalizeTicker } from './utils';
 
 export interface PriceHistoryRecord {
@@ -13,8 +13,13 @@ export interface PriceHistoryRecord {
   close: number;
 }
 
+export interface DailySnapshot {
+  date: string;
+  portfolioValue: number;
+}
+
 const DB_NAME = 'BolsaSantiagoPortafolioDB';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export interface DBBackupData {
   holdings: StockHolding[];
@@ -23,6 +28,10 @@ export interface DBBackupData {
   annualPerformancePercent: number;
   customStocks?: MarketStock[];
   deletedTickers?: string[];
+  investmentPlan?: { budget: number; allocations: { ticker: string; name: string; percent: number; inPlan: boolean; brokerPrice?: number; amount?: number }[] };
+  dailySnapshots?: DailySnapshot[];
+  alerts?: StockAlert[];
+  priceHistory?: PriceHistoryRecord[];
 }
 
 // Let's create an in-memory fallback if IndexedDB fails to initialize or operations fail
@@ -104,6 +113,9 @@ export function initDB(): Promise<IDBDatabase> {
         }
         if (!db.objectStoreNames.contains('price_history')) {
           db.createObjectStore('price_history', { keyPath: 'ticker_date' });
+        }
+        if (!db.objectStoreNames.contains('daily_snapshots')) {
+          db.createObjectStore('daily_snapshots', { keyPath: 'date' });
         }
       };
     } catch (e) {
@@ -547,6 +559,14 @@ export const portafolioDB = {
     }
   },
 
+  // Daily Snapshots
+  async getDailySnapshots(): Promise<DailySnapshot[]> {
+    return getStoreData<DailySnapshot>('daily_snapshots');
+  },
+  async saveDailySnapshot(snapshot: DailySnapshot): Promise<void> {
+    return saveStoreItem<DailySnapshot>('daily_snapshots', snapshot);
+  },
+
   // EXPORT ALL DATA
   async exportBackup(): Promise<DBBackupData> {
     const holdings = await this.getHoldings();
@@ -555,6 +575,28 @@ export const portafolioDB = {
     const annualPerformancePercent = await this.getAnnualYield();
     const customStocks = await this.getCustomStocks();
     const deletedTickers = await this.getDeletedTickers();
+    const dailySnapshots = await this.getDailySnapshots();
+    const priceHistory = await getStoreData<PriceHistoryRecord>('price_history');
+
+    let investmentPlan: DBBackupData['investmentPlan'] = undefined;
+    try {
+      const budget = localStorage.getItem('investment_plan_budget');
+      const data = localStorage.getItem('investment_plan_data');
+      if (budget || data) {
+        investmentPlan = {
+          budget: budget ? Number(budget) : 1000000,
+          allocations: data ? JSON.parse(data) : []
+        };
+      }
+    } catch { /* ignore */ }
+
+    let alerts: DBBackupData['alerts'] = undefined;
+    try {
+      const saved = localStorage.getItem('market_price_alerts');
+      if (saved) {
+        alerts = JSON.parse(saved);
+      }
+    } catch { /* ignore */ }
 
     return {
       holdings,
@@ -562,7 +604,11 @@ export const portafolioDB = {
       refunds,
       annualPerformancePercent,
       customStocks,
-      deletedTickers
+      deletedTickers,
+      investmentPlan,
+      dailySnapshots,
+      alerts,
+      priceHistory
     };
   },
 
@@ -586,6 +632,8 @@ export const portafolioDB = {
     await clearStore('refunds');
     await clearStore('settings');
     await clearStore('custom_stocks');
+    await clearStore('daily_snapshots');
+    await clearStore('price_history');
 
     // Populate stores
     for (const h of holdings) {
@@ -615,6 +663,33 @@ export const portafolioDB = {
         seenDeleted.add(normalized);
       }
     }
+    if (data.investmentPlan) {
+      try {
+        localStorage.setItem('investment_plan_budget', String(data.investmentPlan.budget));
+        localStorage.setItem('investment_plan_data', JSON.stringify(data.investmentPlan.allocations));
+      } catch { /* ignore */ }
+    }
+
+    if (Array.isArray(data.alerts)) {
+      try {
+        localStorage.setItem('market_price_alerts', JSON.stringify(data.alerts));
+      } catch { /* ignore */ }
+    }
+
+    const snapshots = Array.isArray(data.dailySnapshots) ? data.dailySnapshots : [];
+    for (const s of snapshots) {
+      if (s.date && typeof s.portfolioValue === 'number') {
+        await this.saveDailySnapshot(s);
+      }
+    }
+
+    const priceHistory = Array.isArray(data.priceHistory) ? data.priceHistory : [];
+    for (const r of priceHistory) {
+      if (r.ticker_date && r.ticker && r.date && typeof r.close === 'number') {
+        await this.savePriceHistory([r]);
+      }
+    }
+
     await this.saveAnnualYield(yieldValue);
     await this.saveDeletedTickers(Array.from(seenDeleted));
   },
@@ -626,7 +701,10 @@ export const portafolioDB = {
     await clearStore('refunds');
     await clearStore('custom_stocks');
     await clearStore('settings');
+    await clearStore('daily_snapshots');
+    await clearStore('price_history');
     await this.saveAnnualYield(8.5);
     await this.saveDeletedTickers([]);
+    try { localStorage.removeItem('market_price_alerts'); } catch { /* ignore */ }
   }
 };

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { MarketStock } from '../types';
 import { generateStockHistory, getPriceOnOrClosestTo, HistoryPoint } from '../utils/stockHistory';
 import { formatCLP, formatPercent } from '../utils';
@@ -10,8 +10,36 @@ interface StockHistoryVisualizerProps {
 }
 
 export default function StockHistoryVisualizer({ stock, onClose }: StockHistoryVisualizerProps) {
-  // Generate 3 years of daily history (1095 points)
-  const history = useMemo(() => generateStockHistory(stock), [stock]);
+  const [realHistory, setRealHistory] = useState<HistoryPoint[] | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchHistory() {
+      try {
+        const res = await fetch(`/api/portfolio-history?tickers=${encodeURIComponent(stock.ticker)}`);
+        if (res.ok) {
+          const data: { ticker: string; history: { date: string; close: number }[] }[] = await res.json();
+          const item = data.find(d => d.ticker === stock.ticker);
+          if (item && item.history.length > 1 && !cancelled) {
+            setRealHistory(item.history.map(h => ({ date: h.date, price: h.close })));
+            setIsLoadingHistory(false);
+            return;
+          }
+        }
+      } catch { /* fallback to simulated */ }
+      if (!cancelled) setIsLoadingHistory(false);
+    }
+    fetchHistory();
+    return () => { cancelled = true; };
+  }, [stock.ticker]);
+
+  // Use real history when available, fall back to simulated
+  const history = useMemo(() => {
+    if (realHistory) return realHistory;
+    return generateStockHistory(stock);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realHistory, stock.ticker, stock.price, stock.changePercent]);
 
   const maxDateStr = useMemo(() => {
     return new Date().toISOString().split('T')[0];

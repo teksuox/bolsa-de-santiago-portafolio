@@ -193,19 +193,18 @@ export default function MyPortfolio({
       annualTargetYield: number;
       ids: string[];
       manualPrice: boolean;
+      absProfit: number;
+      dailyProfit: number;
     }>();
 
     for (const h of holdings) {
       const existing = map.get(h.ticker);
       if (existing) {
         const totalShares = existing.shares + h.shares;
-        // Weighted average buy price
         const weightedBuyPrice = ((existing.buyPrice * existing.shares) + (h.buyPrice * h.shares)) / totalShares;
         existing.shares = totalShares;
         existing.buyPrice = Math.round(weightedBuyPrice * 100) / 100;
-        // Keep latest currentPrice
         existing.currentPrice = h.currentPrice;
-        // Keep earliest buyDate
         if (h.buyDate < existing.buyDate) existing.buyDate = h.buyDate;
         existing.ids.push(h.id);
         if (h.manualPrice) existing.manualPrice = true;
@@ -219,12 +218,34 @@ export default function MyPortfolio({
           buyDate: h.buyDate,
           annualTargetYield: h.annualTargetYield,
           ids: [h.id],
-          manualPrice: h.manualPrice || false
+          manualPrice: h.manualPrice || false,
+          absProfit: 0,
+          dailyProfit: 0
         });
       }
     }
-    return Array.from(map.values());
-  }, [holdings]);
+    const result = Array.from(map.values());
+    // compute absProfit and dailyProfit
+    for (const g of result) {
+      const cost = g.shares * g.buyPrice;
+      const currentVal = g.shares * g.currentPrice;
+      g.absProfit = currentVal - cost;
+      const todayStrLocal = new Date().toISOString().split('T')[0];
+      const mStock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(g.ticker));
+      let prevClose = mStock?.previousClose;
+      if ((prevClose == null || prevClose <= 0) && mStock?.changePercent != null && g.currentPrice > 0) {
+        prevClose = g.currentPrice / (1 + mStock.changePercent / 100);
+      }
+      if (g.buyDate && g.buyDate >= todayStrLocal) {
+        g.dailyProfit = 0;
+      } else if (prevClose != null && prevClose > 0 && g.currentPrice > 0) {
+        g.dailyProfit = (g.currentPrice - prevClose) * g.shares;
+      } else {
+        g.dailyProfit = 0;
+      }
+    }
+    return result;
+  }, [holdings, marketStocks]);
 
   const { sortedData: sortedGrouped, sortKey: pfSortKey, toggleSort: pfToggleSort, getSortIcon: pfIcon } = useSortable(groupedHoldings, 'ticker', 'sort_portfolio');
 
@@ -441,10 +462,10 @@ export default function MyPortfolio({
                       Haz clic en el lápiz para simular fluctuaciones de precio en tiempo real.
                     </span>
                   </th>
-                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('buyPrice')}>Costo Total{pfIcon('buyPrice')}</th>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('buyPrice')}>Capital Aportado{pfIcon('buyPrice')}</th>
                   <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('currentPrice')}>Valor actual{pfIcon('currentPrice')}</th>
-                  <th className="py-3 px-4 text-right">Cambio Diario</th>
-                  <th className="py-3 px-4 text-right">RENTABILIDAD TOTAL</th>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('dailyProfit')}>Cambio Diario{pfIcon('dailyProfit')}</th>
+                  <th className="py-3 px-4 text-right cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('absProfit')}>RENTABILIDAD TOTAL{pfIcon('absProfit')}</th>
                   <th className="py-3 px-4 text-right">% Port.</th>
                   <th className="py-3 px-4 text-center cursor-pointer hover:text-slate-800 select-none" onClick={() => pfToggleSort('annualTargetYield')}>Rend. Objetivo{pfIcon('annualTargetYield')}</th>
                   <th className="py-3 px-4 text-center"></th>
@@ -563,9 +584,27 @@ export default function MyPortfolio({
                           if (h.buyDate && h.buyDate >= todayStr) {
                             return <span className="text-slate-300 font-mono">—</span>;
                           }
-                          const prevClose = mStock?.previousClose;
-                          const currentPrice = mStock?.price;
+                          let prevClose = mStock?.previousClose;
+                          let currentPrice = mStock?.price;
+                          if ((prevClose == null || prevClose <= 0) && mStock?.changePercent != null && currentPrice) {
+                            prevClose = currentPrice / (1 + mStock.changePercent / 100);
+                          }
                           if (prevClose == null || prevClose <= 0 || currentPrice == null) {
+                            const dp = (h as any).dailyProfit;
+                            if (dp != null && dp !== 0 && h.shares > 0 && h.currentPrice > 0) {
+                              const backPx = h.shares * h.currentPrice - dp;
+                              const pct = backPx > 0 ? (dp / backPx) * 100 : 0;
+                              return (
+                                <div>
+                                  <div className={`font-semibold font-mono ${dp >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    {dp >= 0 ? '+' : ''}{pct.toFixed(2)}%
+                                  </div>
+                                  <div className={`text-[10px] font-mono ${dp >= 0 ? 'text-emerald-500' : 'text-rose-400'}`}>
+                                    {dp >= 0 ? '+' : ''}{formatCLP(dp)}
+                                  </div>
+                                </div>
+                              );
+                            }
                             return <span className="text-slate-300 font-mono">—</span>;
                           }
                           const dailyProfit = (currentPrice - prevClose) * h.shares;
@@ -683,8 +722,11 @@ export default function MyPortfolio({
                               return <span className="text-slate-300 font-mono">—</span>;
                             }
                             const mStock = marketStocks.find(s => normalizeTicker(s.ticker) === normalizeTicker(holding.ticker));
-                            const prevClose = mStock?.previousClose;
+                            let prevClose = mStock?.previousClose;
                             const currentPrice = mStock?.price;
+                            if ((prevClose == null || prevClose <= 0) && mStock?.changePercent != null && currentPrice) {
+                              prevClose = currentPrice / (1 + mStock.changePercent / 100);
+                            }
                             if (prevClose == null || prevClose <= 0 || currentPrice == null) {
                               return <span className="text-slate-300 font-mono">—</span>;
                             }
